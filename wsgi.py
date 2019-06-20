@@ -1,1 +1,1 @@
-privex/lookingglass/wsgi.py
+lookingglass/wsgi.py
