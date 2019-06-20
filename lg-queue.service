@@ -45,10 +45,6 @@ ProtectSystem=full
 # new privileges through execve().
 NoNewPrivileges=true
 
-# Use a new /dev namespace only populated with API pseudo devices
-# such as /dev/null, /dev/zero and /dev/random.
-PrivateDevices=true
-
 # Deny the creation of writable and executable memory mappings.
 MemoryDenyWriteExecute=true
 
