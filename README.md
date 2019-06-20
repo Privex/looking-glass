@@ -4,6 +4,10 @@ Our **network looking glass** is a small Python 3 web application written using 
 
 For safety, the hostname/IP is validated upon entry to ensure no arbitrary commands can be passed in, as well as an ACL blacklist which by default blocks local IPv4 / IPv6 subnets such as `10.0.0.0/8` `192.168.0.0/16` and `fe80::/10` (see `core.py` for the default blocked subnets, and how to add your own blacklist).
 
+You can test it out using our production looking glass website: [Privex AS210083 Network Looking Glass](https://lg.privex.io)
+
+![Screenshot of Looking Glass](https://i.imgur.com/V0wDWcK.png)
+
 # License
 
 This project is licensed under the **GNU AGPL v3**
