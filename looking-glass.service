@@ -25,7 +25,7 @@ WorkingDirectory=/home/LGUSER/looking-glass/
 EnvironmentFile=/home/LGUSER/looking-glass/.env
 
 ExecStart=/home/LGUSER/looking-glass/venv/bin/gunicorn \
-          --bind=0.0.0.0:8282 lookingglass.wsgi
+          --bind=0.0.0.0:8282 wsgi
 
 Restart=always
 Environment=PYTHONUNBUFFERED=0
