@@ -1,11 +1,10 @@
 import ipaddress
 import re
-import socket
 import dns.resolver
 import logging
 from ipaddress import ip_address, IPv6Address, IPv4Address
 from typing import Union
-from lookingglass.core import DISALLOW_SUBNETS
+from lg.lookingglass.settings import DISALLOW_SUBNETS
 
 log = logging.getLogger(__name__)
 

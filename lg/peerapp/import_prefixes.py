@@ -1,0 +1,344 @@
+#!/usr/bin/env python3
+import grpc
+import logging
+from google.protobuf.pyext._message import RepeatedCompositeContainer
+from dataclasses import dataclass, field
+from typing import List, Union, Dict
+from ipaddress import IPv4Address, IPv6Address, IPv4Network, IPv6Network, ip_address, ip_network
+from gobgp import gobgp_pb2, gobgp_pb2_grpc, attribute_pb2
+from enum import Enum
+from datetime import datetime
+from cloudant import CouchDB
+from cloudant.document import Document
+
+from lg import base
+from lg.peerapp.settings import OUR_ASN, OUR_ASN_NAME, LOCAL_IPS, IX_NET_VER, BLACKLIST_ROUTES
+from lg.base import get_couch, get_redis
+from privex.helpers import empty, asn_to_name
+
+log = logging.getLogger(__name__)
+
+
+class PathLoader:
+    asn_cache = {}
+    _couch = None
+    _redis = None
+
+    def __init__(self, host: str):
+        self.channel = channel = grpc.insecure_channel(host)
+        self.stub = gobgp_pb2_grpc.GobgpApiStub(channel)
+        self.paths = dict(
+            v4=self.load_paths(), 
+            v6=self.load_paths(family=gobgp_pb2.Family.AFI_IP6)
+        )
+        self.as_counts = dict(v4={}, v6={})   # type: Dict[str, Dict[str, int]]
+        self.sane_paths = []  # type: List[SanePath]
+
+    @property
+    def couch(self) -> CouchDB:
+        if not self._couch:
+            self._couch = get_couch()
+        return self._couch
+    
+    @property
+    def redis(self):
+        if not self._redis:
+            self._redis = get_redis()
+        return self._redis
+    
+    def load_paths(self, family=gobgp_pb2.Family.AFI_IP, safi=gobgp_pb2.Family.SAFI_UNICAST):
+        return list(
+            self.stub.ListPath(
+                gobgp_pb2.ListPathRequest(family=gobgp_pb2.Family(afi=family, safi=safi))
+            )
+        )
+    
+    def get_as_name(self, asn) -> str:
+        try:
+            r = self.redis
+            asn = int(asn)
+            if asn == int(OUR_ASN):
+                return OUR_ASN_NAME
+            
+            if asn in self.asn_cache:
+                ca = self.asn_cache[asn]
+                # log.debug('Memory Cached: AS %s is "%s"', asn, ca)
+                return ca.decode() if type(ca) is bytes else str(ca)
+            # Check if the AS name is cached in redis
+            rk = f'asn:{asn}'
+            r_asn = r.get(rk)
+            if empty(r_asn):  # If not in Redis, then look it up and then cache in memory+redis 
+                n = self.asn_cache[asn] = asn_to_name(asn)
+                r.set(rk, n, ex=1200)
+                n = n.decode() if type(n) is bytes else str(n)
+                # log.debug('Queried DNS: AS %s is "%s"', asn, n)
+                return n
+            # It was found in Redis, so cache it in memory and return it.
+            n = r_asn.decode() if type(r_asn) is bytes else str(r_asn)
+            self.asn_cache[asn] = n
+            # log.debug('Found in Redis: AS %s is "%s"', asn, n)
+            return n
+        except Exception as e:
+            log.warning('Failed to look up ASN %s - exception: %s %s', asn, type(e), str(e))
+            return f'Unknown ({asn})'
+
+    def parse_paths(self, family='v4', verbose=True):
+        for path in self.paths[family]:
+            try:
+                _p = PathParser(path)
+                p = dict(_p)
+                del p['source_asn']
+                np = SanePath(**p)
+                if ip_network(np.prefix) in BLACKLIST_ROUTES:
+                    log.debug('Skipping path %s as it is blacklisted.', np.prefix)
+                    continue
+
+                self.sane_paths.append(np)
+
+                srcas = str(np.source_asn)
+                if empty(srcas):
+                    log.warning('AS for path %s is empty. Not adding to count.', srcas)
+                    continue
+                ct_as = self.as_counts[family]            
+                ct_as[srcas] = 1 if srcas not in ct_as else ct_as[srcas] + 1
+                if verbose:
+                    print(f'Prefix: {np.prefix}, Source ASN: {srcas}, Next Hop: {np.first_hop}')
+            except Exception:
+                log.exception('Unexpected exception while processing path %s', path)
+        return self.sane_paths
+    
+    def _make_id(self, path: dict):
+        return f"{path['prefix']}-{path['first_hop']}-{path['source_asn']}"
+
+    def store_paths(self):
+        c = self.couch
+        db = c[base.COUCH_DB]
+        log.info('Saving sane paths to CouchDB.')
+        total_prefixes = len(self.sane_paths)
+        for i, p in enumerate(self.sane_paths):
+            if (i % 100) == 0:
+                log.info('Saved %s out of %s prefixes.', i, total_prefixes)
+            p_dic = dict(p)
+            p_id = p_dic['_id'] = self._make_id(p_dic)
+            doc_exists = p_id in db
+            doc = {**db[p_id], **p_dic} if doc_exists else p_dic
+            doc['last_seen'] = str(datetime.utcnow())
+            doc['as_name'] = self.get_as_name(p.source_asn)
+            if doc_exists:
+                n_doc = Document(db, doc['_id'])
+                n_doc.update(doc)
+                n_doc.save()
+            else:
+                db.create_document(doc)
+            # log.debug('Saved prefix %s (id: %s) to database', doc['prefix'], doc['_id'])
+        log.info('Finished saving paths.')
+
+    def summary(self):
+        print('--- v4 paths ---')
+        total_v4 = total_v6 = 0
+        for asn,num in self.as_counts['v4'].items():
+            asname = self.get_as_name(asn)
+            print(f'ASN: {asn:9} Name: {asname:20.20}     Prefixes: {num}')
+            total_v4 += num
+
+        print('--- v6 paths ---')
+        for asn,num in self.as_counts['v6'].items():
+            asname = self.get_as_name(asn)
+            print(f'ASN: {asn:9} Name: {asname:20.20}     Prefixes: {num}')
+            total_v6 += num
+
+        print('--- summary ---')
+        print(f'total v4: {total_v4} -- total v6: {total_v6}')
+
+# found on this gist
+# https://gist.github.com/iwaseyusuke/df1e0300221b0c6aa1a98fc346621fdc
+def unmarshal_any(any_msg):
+    """
+    Unpacks an `Any` message.
+
+    If need to unpack manually, the following is a simple example::
+
+        if any_msg.Is(attribute_pb2.IPAddressPrefix.DESCRIPTOR):
+            ip_addr_prefix = attribute_pb2.IPAddressPrefix()
+            any_msg.Unpack(ip_addr_prefix)
+            return ip_addr_prefix
+    """
+    if any_msg is None:
+        return None
+
+    # Extract 'name' of message from the given type URL like
+    # 'type.googleapis.com/type.name'.
+    msg_name = any_msg.type_url.split('.')[-1]
+
+    for pb in (gobgp_pb2, attribute_pb2):
+        msg_cls = getattr(pb, msg_name, None)
+        if msg_cls is not None:
+            break
+    assert msg_cls is not None
+
+    msg = msg_cls()
+    any_msg.Unpack(msg)
+    return msg
+
+def find_attr(obj: RepeatedCompositeContainer, type_url: str, unmarshal=True):
+    type_url = type_url.lower().strip()
+    for x in obj:
+        tu = str(x.type_url).lower().strip()
+        if tu == type_url or type_url in tu:
+            return unmarshal_any(x) if unmarshal else x
+    return None
+
+
+class AddrFamily(Enum):
+    IPV4 = IPv4Network
+    IPV6 = IPv6Network
+
+
+@dataclass
+class SanePath:
+    prefix: Union[IPv4Network, IPv6Network]
+    family: AddrFamily
+    next_hops: List[Union[IPv4Address, IPv6Address]] = field(default_factory=list)
+    asn_path: List[int] = field(default_factory=list)
+    communities: List[int] = field(default_factory=list)
+    neighbor: Union[IPv4Address, IPv6Address] = None
+    source_id: str = ""
+    age: datetime = None
+
+    @property
+    def source_asn(self):
+        return self.asn_path[0] if len(self.asn_path) > 0 else None
+    
+    @property
+    def first_hop(self):
+        return self.next_hops[0] if len(self.next_hops) > 0 else None
+    
+    @property
+    def ixp(self):
+        ix_nets = IX_NET_VER[type(self.first_hop)]
+        for subnet, ixname in ix_nets:
+            subnet = ip_network(subnet)
+            if ip_address(self.first_hop) in subnet:
+                # log.debug('First hop %s is in subnet %s (IXP: %s)', self.first_hop, subnet, ixname)
+                return ixname
+            # log.debug('Hop %s is NOT in subnet %s (IXP: %s)', self.first_hop, subnet, ixname)
+        return 'N/A'
+    
+    def __iter__(self):
+        d = {
+            'prefix': str(self.prefix),
+            'family': 'v4' if self.family == AddrFamily.IPV4 else 'v6',
+            'next_hops': [str(hop) for hop in self.next_hops],
+            'first_hop': str(self.first_hop),
+            'asn_path': self.asn_path,
+            'source_asn': self.source_asn,
+            'communities': self.communities,
+            'neighbor': str(self.neighbor),
+            'age': str(self.age),
+            'ixp': self.ixp
+        }
+        for k, v in d.items():
+            yield (k, v,)
+
+
+class PathParser:
+    def __init__(self, path: gobgp_pb2.ListPathResponse):
+        self.orig_path = path    # type: gobgp_pb2.ListPathResponse
+        self.path = path.destination.paths[0]   # type: gobgp_pb2.Path
+    
+    @property
+    def prefix(self) -> Union[IPv4Network, IPv6Network]:
+        _pfx = unmarshal_any(self.path.nlri)
+        pfx = f'{_pfx.prefix}/{_pfx.prefix_len}'
+        return ip_network(pfx, strict=False)
+
+    @property
+    def asn_path(self) -> List[int]:
+        p = self.path.pattrs
+        r_asn = find_attr(p, 'AsPathAttribute')
+        return list(r_asn.segments[0].numbers)
+    
+    @property
+    def communities(self) -> List[int]:
+        return list(find_attr(self.path.pattrs, 'communities').communities)
+    
+    @property
+    def neighbor(self) -> Union[IPv4Address, IPv6Address]:
+        return ip_address(self.path.neighbor_ip)
+    
+    @property
+    def family(self) -> AddrFamily:
+        pfx = self.prefix
+        if isinstance(pfx, IPv4Network):
+            return AddrFamily.IPV4
+        if isinstance(pfx, IPv6Network):
+            return AddrFamily.IPV6
+
+        raise TypeError(f'Expected prefix to be IPv4/v6Network but was type "{type(pfx)}"')
+    
+    @property
+    def source_asn(self) -> int:
+        return int(self.path.source_asn)
+    
+    @property
+    def source_id(self) -> str:
+        return str(self.path.source_id)
+    
+    @property
+    def age(self) -> datetime:
+        ts = int(self.path.age.seconds)
+        return datetime.utcfromtimestamp(ts)
+    
+    @property
+    def next_hops(self) -> List[Union[IPv4Address, IPv6Address]]:
+        p = self.path.pattrs
+        if find_attr(p, 'MpReachNLRI') is not None:
+            h = list(find_attr(p, 'MpReachNLRI').next_hops)
+            return [ip_address(hop) for hop in h]
+        nh = find_attr(p, 'NextHopAttribute').next_hop
+        return [ip_address(nh)]
+
+    @staticmethod
+    def find_in_local(subnet):
+        subnet = ip_network(subnet)
+        for l in LOCAL_IPS:
+            if not isinstance(subnet, type(l)): # Ignore non-matching IP versions
+                continue
+            if subnet > l:
+                return l
+        return None
+
+    def __iter__(self):
+        d = {}
+        d['prefix'] = self.prefix
+        d['family'] = self.family
+        d['source_id'] = self.source_id
+        d['source_asn'] = self.source_asn
+        d['neighbor'] = self.neighbor
+        try:
+            d['next_hops'] = self.next_hops
+        except Exception as e:
+            log.warning(f'Could not get next_hops due to exception: {type(e)} {str(e)}')
+            d['next_hops'] = []
+        try:
+            d['asn_path'] = self.asn_path
+        except Exception as e:
+            log.warning(f'Could not get asn_path due to exception: {type(e)} {str(e)}')
+            if self.find_in_local(d['prefix']) is not None:
+                d['asn_path'] = [int(OUR_ASN)]
+            else:
+                d['asn_path'] = []
+        try:
+            d['communities'] = self.communities
+        except Exception as e:
+            log.warning(f'Could not get communities due to exception: {type(e)} {str(e)}')
+            d['communities'] = []
+        try:
+            d['age'] = self.age
+        except Exception as e:
+            log.warning(f'Could not get age due to exception: {type(e)} {str(e)}')
+            d['age'] = None
+        
+        for k, v in d.items():
+            yield (k, v,)
+

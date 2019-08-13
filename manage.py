@@ -19,20 +19,23 @@ Copyright::
 import json
 import logging
 import textwrap
-import sys
 import argparse
-from lookingglass.runner import Runner
-from lookingglass import core
+from lg import base
+from lg.lookingglass.runner import Runner
+from privex.helpers import ErrHelpParser
 
 log = logging.getLogger('lookingglass.managedotpy')
 
+PEERAPP_HELP = textwrap.dedent('''\
+        --------------------
+        The peer information app is disabled. Please set ENABLE_PEERAPP=true to enable
+        management commands for the peer application (peerapp).
+        --------------------
+    ''')
 
-class ErrHelpParser(argparse.ArgumentParser):
-    def error(self, message):
-        sys.stderr.write('error: %s\n' % message)
-        self.print_help()
-        sys.exit(2)
-
+if base.ENABLE_PEERAPP:
+    from lg.peerapp.management import PEERS_HELP
+    PEERAPP_HELP = PEERS_HELP
 
 help_text = textwrap.dedent('''\
 
@@ -40,8 +43,8 @@ help_text = textwrap.dedent('''\
 
         runserver         - Run the flask dev server (DO NOT USE IN PRODUCTION. USE GUNICORN)
         queue             - Start the message queue runner, for running pings/traces in background
- 
-''')
+
+''') + PEERAPP_HELP
 
 parser = ErrHelpParser(
     description='Privex Bandwidth Tracker',
@@ -54,7 +57,7 @@ subparser = parser.add_subparsers()
 
 
 def runserver(opt):
-    from lookingglass.views import flask
+    from lg.lookingglass.views import flask
 
     flask.run(
         host=opt.host,
@@ -64,14 +67,14 @@ def runserver(opt):
 
 
 def queue_handler(opt):
-    r = Runner(mq_conn=core.get_rmq(), queue=core.cf['RMQ_QUEUE'], redis=core.get_redis())
+    r = Runner(mq_conn=base.get_rmq(), queue=base.RMQ_QUEUE, redis=base.get_redis())
     r.run()
 
 
 def queue_test(opt):
-    queue = core.RMQ_QUEUE
+    queue = base.RMQ_QUEUE
     log.debug('Getting channel with queue %s and routing key %s', queue, queue)
-    chan = core.get_rmq_chan()
+    chan = base.get_rmq_chan()
     chan.queue_declare(queue)
     data = dict(req_id='abcd-efgh-1234', action='trace', ip='8.8.4.4')
     chan.basic_publish(exchange='', routing_key=queue, body=json.dumps(data))
@@ -87,6 +90,11 @@ p_run = subparser.add_parser('runserver', description='Run flask dev server (DO 
 p_run.add_argument('--port', help='Port to listen on', default=5222, type=int)
 p_run.add_argument('--host', help='IP/Hostname to listen on', default='127.0.0.1')
 p_run.set_defaults(func=runserver)
+
+# If ENABLE_PEERAPP is true, add additional commands for that application.
+if base.ENABLE_PEERAPP:
+    from lg.peerapp.management import add_parsers
+    add_parsers(subparser)
 
 args = parser.parse_args()
 

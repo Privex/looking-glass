@@ -16,7 +16,7 @@ Copyright::
     +===================================================+
 
 """
-from lookingglass.views import flask
+from lg.lookingglass.views import flask
 
 application = flask
 

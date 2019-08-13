@@ -1,0 +1,13 @@
+{% extends 'base.html' %}
+{% block content %}
+<div id="app">
+
+</div>
+{% endblock %}
+{% block scripts %}
+   <script src="/static/vue-dist/js/app.js"></script>
+   <script src="/static/vue-dist/js/chunk-vendors.js"></script>
+   <script>
+   Vue.config.devtools = true
+   </script>
+{% endblock %}

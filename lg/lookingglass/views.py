@@ -4,13 +4,15 @@ import traceback
 from typing import Tuple
 from uuid import uuid4
 
-from flask import Response, request, render_template
+from flask import Response, request, render_template, Blueprint
 from flask.json import jsonify
 
-from lookingglass.core import flask, RMQ_QUEUE, get_rmq_chan, get_redis
-from lookingglass.helpers import validate_host
+from lg.base import RMQ_QUEUE, get_rmq_chan, get_redis
+from lg.lookingglass.helpers import validate_host
 
 log = logging.getLogger(__name__)
+
+flask = Blueprint('lookingglass', __name__, template_folder='templates')
 
 # format: (err_code, (message, status_code))
 API_ERRORS = (

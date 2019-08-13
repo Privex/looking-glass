@@ -26,14 +26,18 @@ from flask import Flask
 from getenv import env
 from pika.adapters.blocking_connection import BlockingChannel
 from privex.loghelper import LogHelper
+from privex.helpers import env_bool
 
 load_dotenv()
 flask = Flask(__name__)
 
 cf = flask.config
 
-DEBUG = flask.config['DEBUG'] = str(env('DEBUG', 'false')).lower() in ['true', '1', 'yes']
+DEBUG = flask.config['DEBUG'] = env_bool('DEBUG', False)
 BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+
+ENABLE_PEERSAPP = cf['ENABLE_PEERAPP'] = env_bool('ENABLE_PEERAPP', True)
+"""Enable the peer information application (peerapp) - Default: True (enabled)"""
 
 #######################################
 #
@@ -47,21 +51,7 @@ BASE_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 # Valid environment log levels (from least to most severe) are:
 # DEBUG, INFO, WARNING, ERROR, FATAL, CRITICAL
 
-lh = LogHelper('lookingglass')
-
-CONSOLE_LOG_LEVEL = env('LOG_LEVEL', None)
-CONSOLE_LOG_LEVEL = logging.getLevelName(str(CONSOLE_LOG_LEVEL).upper()) if CONSOLE_LOG_LEVEL is not None else None
-
-if CONSOLE_LOG_LEVEL is None:
-    CONSOLE_LOG_LEVEL = logging.DEBUG if flask.config['DEBUG'] else logging.INFO
-
-lh.add_console_handler(level=CONSOLE_LOG_LEVEL)
-
-DBG_LOG, ERR_LOG = os.path.join(BASE_DIR, 'logs', 'debug.log'), os.path.join(BASE_DIR, 'logs', 'error.log')
-lh.add_timed_file_handler(DBG_LOG, when='D', interval=1, backups=14, level=logging.INFO)
-lh.add_timed_file_handler(ERR_LOG, when='D', interval=1, backups=14, level=logging.WARNING)
-
-log = lh.get_logger()
+log = logging.getLogger('lookingglass')
 
 #######################################
 #
@@ -149,6 +139,13 @@ def get_rmq_chan() -> BlockingChannel:
     # __STORE['rmq_chan'] = chan
     # return __STORE['rmq_chan']
 
+#######################################
+#
+# Register other apps
+#
+#######################################
 
-
+if cf['ENABLE_PEERAPP']:
+    from lg.peerapp.views import flask as peer_flask
+    flask.register_blueprint(peer_flask)
 

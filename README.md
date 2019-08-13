@@ -50,12 +50,31 @@ Here's the important parts:
 
 # Requirements
 
+The looking glass is composed of two pieces:
+
+ - The Trace / Ping tool (sometimes directly referred to as the "looking glass")
+ - The BGP Peer / Prefix tracking tool
+
+You can disable either part of the application using `.env` settings.
+
+To run either of them, you need at the least:
+
  - **Ubuntu Bionic Server 18.04** is recommended, however other distros may work
- - **RabbitMQ Server** - Used for processing mtr/ping's in the background
- - **Redis** - Used for temporarily storing user's requests and their results
  - **Python 3.7+** is strongly recommended (3.6 is the bare minimum)
- - The utilities **mtr** and **iputils-ping**
+ - **Redis** - Used for caching data, plus storing user's trace/ping requests and their results
+ - **Yarn** and **NodeJS** for compiling the Vue JS components
  - Minimal hardware requirements, will probably run on as little as 512mb RAM and 1 core
+
+For the trace / ping tool (the main "looking glass" part):
+
+ - The utilities **mtr** and **iputils-ping**
+ - **RabbitMQ Server** - Used for processing mtr/ping's in the background
+
+For the BGP Peer / Prefix tool:
+
+ - **Apache CouchDB** - for storing the prefix data
+ - An instance of [GoBGP](https://github.com/osrg/gobgp) connected to a BGP router
+ 
 
 # Installation
 
@@ -65,19 +84,54 @@ Quickstart (Tested on Ubuntu Bionic 18.04 - may work on other Debian-based distr
 sudo apt update -y
 
 ####
-#
+# Core requirements:
 #  - Python 3.7 is strongly recommended, we cannot guarantee compatibility with older versions
+#  - Redis is used for caching, storing metadata about a request, and it's results upon completion
+#  - Yarn is required for building the Vue JS frontend files
+####
+sudo apt install -y git python3.7 python3.7-venv redis-server
+
+# Install Yarn
+curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | sudo apt-key add -
+echo "deb https://dl.yarnpkg.com/debian/ stable main" | sudo tee /etc/apt/sources.list.d/yarn.list
+
+sudo apt update -y && sudo apt install -y yarn
+
+####
+# To run the Trace / Ping part of the application, you need:
+# 
 #  - RabbitMQ is used for queueing and processing mtr/ping requests
-#  - Redis is used for storing metadata about a request, and it's results upon completion
 #  - MTR is used for traceroutes, and iputils-ping is required as it offers a single `ping` command 
 #    which works with both IPv4 and IPv6 
 ####
-sudo apt install -y git python3.7 python3.7-venv rabbitmq-server redis-server mtr-tiny iputils-ping
+sudo apt install -y rabbitmq-server mtr-tiny iputils-ping
 
 # For MTR to work correctly as non-privileged users, mtr-packet must be owned by root
 # and set with the SUID bit (+s)
 sudo chown root:root /usr/bin/mtr-packet
 sudo chmod +s /usr/bin/mtr-packet 
+
+####
+# To run the BGP Peers and Prefixes part of the application, you need:
+#
+#  - CouchDB for storing the prefix data
+#  - GoBGP for obtaining the BGP prefix data from (can either run locally, or on another server
+####
+
+# Install CouchDB
+curl -L https://couchdb.apache.org/repo/bintray-pubkey.asc | sudo apt-key add -
+echo "deb https://apache.bintray.com/couchdb-deb bionic main" | sudo tee -a /etc/apt/sources.list
+sudo apt update
+# At the prompts: install standalone, set a password for the admin user and make sure to save it somewhere safe
+sudo apt install couchdb
+
+# Install GoBGP (see example configuration in this README after you're done)
+cd /tmp
+wget https://github.com/osrg/gobgp/releases/download/v2.7.0/gobgp_2.7.0_linux_amd64.tar.gz
+tar xzf gobgp_2.7.0_linux_amd64.tar.gz
+sudo install -v gobgp gobgpd /usr/bin/
+
+# Create user 'lg' to run the application under
 
 adduser --gecos "" --disabled-login lg
 sudo su - lg
@@ -100,6 +154,17 @@ cp .env.example .env
 # edit .env with your favourite editor, adjust as needed
 vim .env
 
+# Install NodeJS using NVM, then build the JS
+
+curl -o- https://raw.githubusercontent.com/nvm-sh/nvm/v0.34.0/install.sh | bash
+
+export NVM_DIR="${XDG_CONFIG_HOME/:-$HOME/.}nvm"
+[ -s "$NVM_DIR/nvm.sh" ] && \. "$NVM_DIR/nvm.sh" # This loads nvm
+
+nvm install --lts  # Install latest NodeJS LTS
+yarn install       # Install project JS requirements
+yarn build         # Build frontend JS files
+
 
 ###
 # BELOW INSTRUCTIONS FOR DEVELOPMENT ONLY
@@ -111,6 +176,13 @@ flask run
 # in another terminal session, e.g. with tmux/screen
 # run the queue loader, which processes incoming mtr/ping's from rabbitmq
 ./manage.py queue
+
+# to run GoBGP locally (edit gbgp.conf as required)
+cp gbgp.example.conf gbgp.conf
+sudo gobgpd -f gbgp.conf
+
+# to load prefixes from GoBGP
+./manage.py prefixes
 
 ###
 # RUNNING IN PRODUCTION
@@ -133,11 +205,106 @@ sudo systemctl enable looking-glass.service
 sudo systemctl start looking-glass.service
 sudo systemctl start lg-queue.service
 
+# set up a cron to load prefixes from GoBGP regularly
+
+crontab -e
+# m    h  dom mon dow   command
+# */5  *   *   *   *    /home/lg/looking-glass/venv/bin/python3 /home/lg/looking-glass/manage.py prefixes
+
 # looking glass should now be running on 127.0.0.1:8282
 # set up a reverse proxy such as nginx / apache pointed to the above host
 # and it should be ready to go :)
 
 ```
+
+# Using GoBGP
+
+An example configuration is included as `gbgp.example.conf` - you'll need to customise this with your server's
+external IPv4 / IPv6 addresses and point it at your router.
+
+For most cases, it's fine to leave the local ASN as the private ASN `65000`
+
+Make sure to change the following settings:
+ 
+ - `local-address-list` - Your public (or LAN) IPv4 and/or IPv6 address that your router will be pointed towards
+ - `peer-as` - (one for v4 and one for v6) The ASN of the router you're obtaining the prefixes from
+ - `neighbor-address` -  (one for v4 and one for v6) Your router's IPv4 / v6 address
+ - `local-address` - (under neighbors.transport.config) This should generally match the IPv6 address in your local address list
+
+Here's an example BGP configuration for Cisco IOS (commands may differ between models and OS versions), using
+the example IP's in `gbgp.example.conf`:
+
+```
+ip bgp-community new-format
+ipv6 multicast rpf use-bgp
+
+router bgp 210083
+    no bgp enforce-first-as
+    bgp log-neighbor-changes
+    !
+    template peer-policy GOBGP
+        next-hop-unchanged allpaths
+        send-community both
+        send-label
+    exit-peer-policy
+    !
+    neighbor 192.168.56.56 remote-as 65000
+    neighbor 192.168.56.56 ebgp-multihop 255
+    neighbor 2001:abcd:def1::123 remote-as 65000
+    neighbor 2001:abcd:def1::123 ebgp-multihop 255
+    !
+    address-family ipv4
+        neighbor 192.168.56.56 activate
+        neighbor 192.168.56.56 inherit peer-policy GOBGP
+        neighbor 192.168.56.56 route-server-client
+    exit-address-family
+    !
+    address-family ipv6
+        neighbor 2001:abcd:def1::123 activate
+        neighbor 2001:abcd:def1::123 inherit peer-policy GOBGP
+        neighbor 2001:abcd:def1::123 route-server-client
+        neighbor 2001:abcd:def1::123 next-hop-unchanged
+    exit-address-family
+    !
+exit
+
+```
+
+Again, this is just an example configuration. You should adjust it for your own requirements, or if you aren't running
+a Cisco IOS router, then simply use it as a guideline.
+
+For best compatibility, we use `ebgp-multihop` in the above configuration and in the gbgp.example.conf, this
+allows for your GoBGP server to be running on a non-adjacent network, which may be common in datacenters with 
+various layers of routers.
+
+To ensure that the **next hop** and **source asn** data isn't mangled by the router, it's recommended to enable the
+**route server client** option on your router for the GoBGP neighbour (see example config above). This ensures that 
+prefixes are sent to GoBGP exactly as they came into the router, without replacing the **next hop** or adding it's 
+own **source asn** to the path.
+
+**Running GoBGP**
+
+GoBGP must be ran as root, as BGP uses TCP port 179 (on Linux, ports below 1024 are privileged, only root can listen
+on them).
+
+Copy the example config, adjust it as required, and then run it like so:
+
+```
+# to run GoBGP locally (edit gbgp.conf as required)
+cp gbgp.example.conf gbgp.conf
+sudo gobgpd -f gbgp.conf
+```
+
+# Configuration
+
+Common configuration options are included in `.env.example` and are generally self explanatory.
+
+For information about each configuration option, check the comments in the following files:
+
+ - `lg/base.py` - Shared settings between both apps
+ - `lg/lookingglass/settings.py` - Settings specific to the Trace / Ping tool
+ - `lg/peerapp/settings.py` - Settings specific to the BGP Peers tool 
+
 
 # Contributing
 

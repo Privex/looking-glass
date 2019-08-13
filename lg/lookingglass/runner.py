@@ -1,5 +1,7 @@
 """
 
+Background runner/worker for looking glass, handles incoming ping/mtr requests from the queue.
+
 Copyright::
     +===================================================+
     |                 © 2019 Privex Inc.                |
@@ -24,19 +26,10 @@ from pika import spec
 from pika.adapters.blocking_connection import BlockingChannel, BlockingConnection
 from redis import Redis
 
-from lookingglass.helpers import ip_is_v4, is_valid_hostname, ip_is_v6, validate_host, v4_protos, v6_protos
+from lg.exceptions import InvalidHostException, MissingArgsException
+from lg.lookingglass.helpers import validate_host, v4_protos, v6_protos
 
 log = logging.getLogger(__name__)
-
-print(__name__)
-
-
-class InvalidHostException(BaseException):
-    pass
-
-
-class MissingArgsException(BaseException):
-    pass
 
 
 class Runner:

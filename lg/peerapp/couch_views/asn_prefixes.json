@@ -1,0 +1,14 @@
+{
+    "_id": "_design/asn_prefixes",
+    "views": {
+      "all": {
+        "reduce": "_sum",
+        "map": "function(doc) { emit([doc.source_asn, doc.as_name], 1) }"
+      },
+      "by_family": {
+        "reduce": "_sum",
+        "map": "function(doc) { emit([doc.source_asn, doc.as_name, doc.family], 1) }"
+      }
+    },
+    "language": "javascript"
+  }
