@@ -2,40 +2,36 @@
 #
 # Systemd Service file for `privex/looking-glass`
 #
-# To use this file, copy it into /etc/systemd/system/looking-glass.service , replace LGUSER with the username of the Linux
-# account it was installed into, and adjust the paths if necessary.
+# Requires `gobgpd` to be installed into /usr/bin and config at /etc/gbgp.conf (edit if required)
+#
+# To use this file, copy it into /etc/systemd/system/gobgp.service and ensure you've placed your GoBGP config
+# at /etc/gbgp.conf
 #
 # Once adjusted for your specific installation, run the following:
 #
-#    systemctl enable looking-glass.service
-#    systemctl start looking-glass.service
+#    systemctl enable gobgp.service
+#    systemctl start gobgp.service
 #
-# looking-glass will now have started in the background as a systemd service, and will automatically start on reboot
+# GoBGP Daemon will now have started in the background as a systemd service, and will automatically start on reboot
 #
 #####
 [Unit]
-Description=Privex Network Looking Glass - Web App
+Description=GoBGP Daemon (added by Privex)
 After=network.target
 
 [Service]
 Type=simple
-User=LGUSER
+User=root
 
-WorkingDirectory=/home/LGUSER/looking-glass/
-EnvironmentFile=/home/LGUSER/looking-glass/.env
-
-ExecStart=/home/LGUSER/looking-glass/venv/bin/gunicorn \
-          --bind=0.0.0.0:8282 wsgi
+ExecStart=/usr/bin/gobgpd -f /etc/gbgp.conf
 
 Restart=always
-Environment=PYTHONUNBUFFERED=0
 RestartSec=30
 StandardOutput=syslog
 
 # Hardening measures
 ####################
 
-# Provide a private /tmp and /var/tmp.
 PrivateTmp=true
 
 # Mount /usr, /boot/ and /etc read-only for the process.
@@ -54,7 +50,7 @@ MemoryDenyWriteExecute=true
 
 [Install]
 WantedBy=multi-user.target
-Alias=lg.service
+Alias=gobgpd.service
 
 #####
 # +===================================================+

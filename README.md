@@ -200,10 +200,9 @@ sudo vim /etc/systemd/system/lg-queue.service
 sudo vim /etc/systemd/system/looking-glass.service
 
 # once the service files are adjusted to your needs, enable and start them
-sudo systemctl enable lg-queue.service
-sudo systemctl enable looking-glass.service
-sudo systemctl start looking-glass.service
-sudo systemctl start lg-queue.service
+sudo systemctl daemon-reload
+sudo systemctl enable lg-queue.service looking-glass.service gobgp.service
+sudo systemctl start looking-glass.service lg-queue.service gobgp.service
 
 # set up a cron to load prefixes from GoBGP regularly
 
