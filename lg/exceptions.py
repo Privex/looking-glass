@@ -16,3 +16,8 @@ class MissingArgsException(PrivexException):
 class DatabaseConnectionFail(PrivexException):
     """Raised when there's a connectivity problem with some form of database"""
     pass
+
+
+class GoBGPException(PrivexException):
+    """Raised to wrap certain GoBGP / grpc library exceptions"""
+    pass

@@ -72,7 +72,7 @@ For the trace / ping tool (the main "looking glass" part):
 
 For the BGP Peer / Prefix tool:
 
- - **Apache CouchDB** - for storing the prefix data
+ - **PostgreSQL** (database server) - for storing the prefix data
  - An instance of [GoBGP](https://github.com/osrg/gobgp) connected to a BGP router
  
 
@@ -114,16 +114,32 @@ sudo chmod +s /usr/bin/mtr-packet
 ####
 # To run the BGP Peers and Prefixes part of the application, you need:
 #
-#  - CouchDB for storing the prefix data
+#  - PostgreSQL for storing the prefix data
 #  - GoBGP for obtaining the BGP prefix data from (can either run locally, or on another server
 ####
 
-# Install CouchDB
-curl -L https://couchdb.apache.org/repo/bintray-pubkey.asc | sudo apt-key add -
-echo "deb https://apache.bintray.com/couchdb-deb bionic main" | sudo tee -a /etc/apt/sources.list
-sudo apt update
-# At the prompts: install standalone, set a password for the admin user and make sure to save it somewhere safe
-sudo apt install couchdb
+sudo apt install -y postgresql libpq-dev
+
+# To avoid timezone issues, set your PostgreSQL timezone to UTC
+#
+# Add this line to the file:
+#
+# timezone = 'UTC'
+#
+sudo vim /etc/postgresql/10/main/conf.d/timezone.conf
+sudo systemctl enable postgresql
+sudo systemctl restart postgresql
+
+# Create a postgres user and database for the app
+sudo su - postgres
+
+# (as the user 'postgres')
+# Create the Postgres user 'lg' (save the password somewhere safe, you'll need to put it in PSQL_PASS in .env)
+createuser -SDRl -P lg
+# Create the Postgres database 'lookingglass' owned by user 'lg'
+createdb -O lg lookingglass
+exit
+
 
 # Install GoBGP (see example configuration in this README after you're done)
 cd /tmp
@@ -144,15 +160,19 @@ sudo su - lg
 git clone https://github.com/Privex/looking-glass.git
 cd looking-glass
 
-# Create and activate a virtualenv with Python 3.7
-python3.7 -m venv venv
-source venv/bin/activate
-# Install the python packages required
-pip3 install -r requirements.txt
+pip3 install pipenv
+
+# Create, activate and install python dependencies into a virtualenv with Python 3.7
+pipenv install
+pipenv shell
 
 cp .env.example .env
 # edit .env with your favourite editor, adjust as needed
 vim .env
+
+# Migrate the database
+
+flask db upgrade
 
 # Install NodeJS using NVM, then build the JS
 
@@ -181,8 +201,8 @@ flask run
 cp gbgp.example.conf gbgp.conf
 sudo gobgpd -f gbgp.conf
 
-# to load prefixes from GoBGP
-./manage.py prefixes
+# to load prefixes immediately from GoBGP
+./run.sh cron
 
 ###
 # RUNNING IN PRODUCTION
@@ -194,6 +214,8 @@ exit
 # install the systemd services
 cd /home/lg/looking-glass
 sudo cp *.service /etc/systemd/system/
+# install GoBGP configuration into /etc for the service to use it
+sudo cp gbgp.example.conf /etc/gbgp.conf
 
 # adjust the user/paths in the service files as needed
 sudo vim /etc/systemd/system/lg-queue.service
@@ -208,13 +230,33 @@ sudo systemctl start looking-glass.service lg-queue.service gobgp.service
 
 crontab -e
 # m    h  dom mon dow   command
-# */5  *   *   *   *    /home/lg/looking-glass/venv/bin/python3 /home/lg/looking-glass/manage.py prefixes
+# */5  *   *   *   *    /home/lg/looking-glass/run.sh cron
 
 # looking glass should now be running on 127.0.0.1:8282
 # set up a reverse proxy such as nginx / apache pointed to the above host
 # and it should be ready to go :)
 
 ```
+
+# Updating your Looking Glass installation
+
+For convenience, we have an `update` command in our `run.sh` which runs the various update steps for you, helping
+avoid human error such as forgetting to re-run `yarn install` to update NodeJS packages, or `pipenv install` to update
+python packages.
+
+```
+./run.sh update
+```
+
+The `update` command does the following:
+
+ - Runs `git pull` to update your files using our Github repo
+ - Runs `pipenv update` to ensure any new Python package dependencies are installed, and updates existing packages
+ - Runs `yarn install` to update any NodeJS dependencies, and `yarn build` to re-build the frontend VueJS components
+ - Runs `flask db upgrade` to make sure any new PostgreSQL migrations are applied
+ - Displays post update information, so you remember to update your systemd service files (if required), and
+   restart the systemd services.
+ 
 
 # Using GoBGP
 

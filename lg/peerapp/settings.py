@@ -53,6 +53,14 @@ The above would be parsed and result in the following python object::
 # GoBGP protobuf host + port to connect to
 GBGP_HOST = env('GBGP_HOST', 'localhost:50051')
 
+CHUNK_SIZE = int(env('CHUNK_SIZE', 300))
+"""
+Amount of prefixes to commit as a chunk while running `./manage.py prefixes`
+
+Affects how often it displays the current progress, i.e. `Saved 1200 out of 4548 prefixes` as well as how many
+prefixes are committed per each TX. Numbers lower than 20 may result in performance issues.
+"""
+
 BLACKLIST_ROUTES = [ip_network(ip) for ip in BLACKLIST_ROUTES]
 
 IX_NET_MAP = {

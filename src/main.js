@@ -44,9 +44,9 @@ const router = new VueRouter({
 });
 
 const prefix_api = {
-    list_asns: async function(method = 'all') {
+    list_asns: async function() {
         return new Promise(resolve => {
-            var url = `/api/v1/asn_prefixes/${method}`;
+            var url = `/api/v1/asn_prefixes/`;
             return fetch(url)
             .then((response) => { 
                 if (response.status !== 200) {
@@ -96,8 +96,8 @@ const store = new Vuex.Store({
     },
   },
   actions: {
-    loadASNs({ commit }, { method = 'all' }) {
-      return prefix_api.list_asns(method).then(d => {
+    loadASNs({ commit }, { }) {
+      return prefix_api.list_asns().then(d => {
         commit('replaceASNs', d)
       })
     },
@@ -115,7 +115,7 @@ new Vue({
   router,
   store,
   created() {
-    this.$store.dispatch('loadASNs', {method: 'by_family'});
+    this.$store.dispatch('loadASNs', {});
   },
   render: h => h(App),
 }).$mount('#app');

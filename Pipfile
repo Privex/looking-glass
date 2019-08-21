@@ -8,7 +8,7 @@ verify_ssl = true
 [packages]
 gunicorn = ">=19.9.0"
 privex-loghelper = ">=1.0.4"
-privex-helpers = ">=1.1.0"
+privex-helpers = ">=1.2.1"
 python-dotenv = ">=0.10.1"
 redis = ">=3.2.0"
 pika = "==1.0.0"
@@ -17,9 +17,11 @@ dnspython = ">=1.16.0"
 protobuf = ">=3.9.0"
 grpcio = ">=1.22.0"
 grpcio-tools = ">=1.22.0"
-cloudant = ">=2.12.0"
 Flask = "==1.0.2"
 CouchDB = ">=1.2"
+flask-sqlalchemy = "*"
+psycopg2 = "*"
+flask-migrate = "*"
 
 [requires]
 python_version = "3.7"

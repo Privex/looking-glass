@@ -2,7 +2,7 @@
 #
 # Systemd Service file for `privex/looking-glass`
 #
-# To use this file, copy it into /etc/systemd/system/looking-glass.service , replace LGUSER with the username of the Linux
+# To use this file, copy it into /etc/systemd/system/looking-glass.service , replace `lg` with the username of the Linux
 # account it was installed into, and adjust the paths if necessary.
 #
 # Once adjusted for your specific installation, run the following:
@@ -19,13 +19,12 @@ After=network.target
 
 [Service]
 Type=simple
-User=LGUSER
+User=lg
 
-WorkingDirectory=/home/LGUSER/looking-glass/
-EnvironmentFile=/home/LGUSER/looking-glass/.env
+WorkingDirectory=/home/lg/looking-glass/
+EnvironmentFile=/home/lg/looking-glass/.env
 
-ExecStart=/home/LGUSER/looking-glass/venv/bin/gunicorn \
-          --bind=0.0.0.0:8282 wsgi
+ExecStart=/home/lg/looking-glass/run.sh server
 
 Restart=always
 Environment=PYTHONUNBUFFERED=0

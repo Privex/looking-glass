@@ -1,88 +1,159 @@
 #!/usr/bin/env python3
 import grpc
+import grpc._channel
 import logging
+from flask_sqlalchemy import SQLAlchemy
 from google.protobuf.pyext._message import RepeatedCompositeContainer
 from dataclasses import dataclass, field
 from typing import List, Union, Dict
 from ipaddress import IPv4Address, IPv6Address, IPv4Network, IPv6Network, ip_address, ip_network
+
+from psycopg2.extras import Inet
+from redis import Redis
+
 from gobgp import gobgp_pb2, gobgp_pb2_grpc, attribute_pb2
+from gobgp.gobgp_pb2 import ListPathRequest, ListPathResponse, Family
 from enum import Enum
 from datetime import datetime
-from cloudant import CouchDB
-from cloudant.document import Document
-
 from lg import base
-from lg.peerapp.settings import OUR_ASN, OUR_ASN_NAME, LOCAL_IPS, IX_NET_VER, BLACKLIST_ROUTES
-from lg.base import get_couch, get_redis
-from privex.helpers import empty, asn_to_name
+from lg.models import ASN, Prefix, Community
+from lg.peerapp.settings import OUR_ASN, OUR_ASN_NAME, LOCAL_IPS, IX_NET_VER, BLACKLIST_ROUTES, CHUNK_SIZE
+from lg.base import get_redis
+from lg.exceptions import GoBGPException
+from privex.helpers import empty, asn_to_name, r_cache, FO
 
 log = logging.getLogger(__name__)
 
 
 class PathLoader:
-    asn_cache = {}
-    _couch = None
-    _redis = None
+    """
 
-    def __init__(self, host: str):
-        self.channel = channel = grpc.insecure_channel(host)
-        self.stub = gobgp_pb2_grpc.GobgpApiStub(channel)
-        self.paths = dict(
-            v4=self.load_paths(), 
-            v6=self.load_paths(family=gobgp_pb2.Family.AFI_IP6)
-        )
+    :ivar grpc._channel.Channel channel: GRPC Channel for use by GoBGP API
+    :ivar gobgp_pb2_grpc.GobgpApiStub stub: Instance of :py:class:`gobgp_pb2_grpc.GobgpApiStub`
+    :ivar list paths: List of GoBGP path objects as instances of :py:class:`gobgp.gobgp_pb2.ListPathResponse`
+    :ivar List[SanePath] sane_paths: A list of prefixes as :class:`.SanePath` instances
+    :ivar Dict[str, Dict[str, int]] as_counts: Contains a total of v4 and v6 prefixes for each ASN
+    """
+    asn_cache = {}
+    # _couch = None
+    _redis = None    # type: Redis
+    _db = None       # type: SQLAlchemy
+    asn_in_db = {}   # type: Dict[int, ASN]
+
+    _cache = dict(
+        asn_in_db={},  # type: Dict[int, ASN]
+        community_in_db={},   # type: Dict[int, Community]
+    )
+
+    def __init__(self, host: str = 'localhost:50051', db: SQLAlchemy = None, auto_load=True, **kwargs):
+        """
+        Constructor for PathLoader, sets up GoBGP
+
+        :param str host: `host:port` of a GoBGP RPC server (default: `localhost:50051`)
+        :param SQLAlchemy db: An instance of :py:class:`flask_sqlalchemy.SQLAlchemy`
+        :param bool auto_load: Automatically populate :py:attr:`.paths` with v4/v6 prefixes during __init__ (def: True)
+        :raises GoBGPException: Generally raised when we can't connect to GoBGP's RPC (may only be raised if auto_load)
+        """
+        self.quiet = kwargs.get('quiet', False)
+        self.verbose = kwargs.get('verbose', False)
+        if db is not None:
+            PathLoader._db = self._db = db
+        self.host = host
+        self.paths = dict(v6=[], v4=[])  # type: Dict[str, List[ListPathResponse]]
         self.as_counts = dict(v4={}, v6={})   # type: Dict[str, Dict[str, int]]
         self.sane_paths = []  # type: List[SanePath]
 
+        try:
+            self.channel = channel = grpc.insecure_channel(host)
+            self.stub = gobgp_pb2_grpc.GobgpApiStub(channel)
+            if auto_load:
+                self.paths['v4'], self.paths['v6'] = self.load_paths(), self.load_paths(family=Family.AFI_IP6)
+        except grpc._channel._Rendezvous as e:
+            raise GoBGPException(f'Failed to connect to GoBGP server at {host} - reason: {type(e)} {str(e.details())}')
+        except GoBGPException as e:
+            raise e
+
     @property
-    def couch(self) -> CouchDB:
-        if not self._couch:
-            self._couch = get_couch()
-        return self._couch
-    
+    def db(self) -> SQLAlchemy:
+        """Obtain an SQLAlchemy instance from :py:attr:`._db` or init SQLAlchemy if it's `None`"""
+        if not PathLoader._db:
+            _, db, _ = base.get_app()
+            PathLoader._db = db
+        return PathLoader._db
+
     @property
-    def redis(self):
+    def redis(self) -> Redis:
+        """Obtain a Redis instance from :py:attr:`._redis` or init Redis if it's `None`"""
         if not self._redis:
             self._redis = get_redis()
         return self._redis
-    
-    def load_paths(self, family=gobgp_pb2.Family.AFI_IP, safi=gobgp_pb2.Family.SAFI_UNICAST):
-        return list(
-            self.stub.ListPath(
-                gobgp_pb2.ListPathRequest(family=gobgp_pb2.Family(afi=family, safi=safi))
-            )
-        )
-    
-    def get_as_name(self, asn) -> str:
+
+    def set_db(self, db: SQLAlchemy):
+        """Sets the private :py:attr:`._db` to the instance passed in `db`"""
+        PathLoader._db = self._db = db
+
+    def load_paths(self, family=Family.AFI_IP, safi=Family.SAFI_UNICAST) -> List[ListPathResponse]:
+        """
+        Queries GoBGP (via :py:attr:`.stub`) to obtain a list of paths matching the given `family` and `safi` params.
+
+        Usage:
+
+            >>> paths_v4 = PathLoader().load_paths()
+            >>> paths_v6 = PathLoader().load_paths(family=Family.AFI_IP6)
+            >>> paths_v4[0].destination.paths[0].source_asn
+            210083
+
+
+        :param Family family:  The IP version, e.g. `Family.AFI_IP` for IPv4 or `Family.AFI_IP6` for IPv6
+        :param Family safi:    The type of IP prefix, e.g. `Family.SAFI_UNICAST` or `Family.SAFI_MULTICAST`
+        :raises GoBGPException: Generally raised when we can't connect to GoBGP's RPC
+        :return List[gobgp_pb2.ListPathResponse] paths: A list of GoBGP paths
+        """
+
         try:
-            r = self.redis
+            return list(
+                self.stub.ListPath(
+                    ListPathRequest(family=Family(afi=family, safi=safi))
+                )
+            )
+        except grpc._channel._Rendezvous as e:
+            raise GoBGPException(f'Failed to connect to GoBGP server at {self.host} - '
+                                 f'reason: {type(e)} {str(e.details())}')
+
+    @r_cache('asn:{}', format_args=[1, 'asn'], format_opt=FO.POS_AUTO)
+    def get_as_name(self, asn: Union[int, str]) -> str:
+        """
+        Get the human name for a given AS Number (ASN), with local memory caching + redis caching.
+
+        Uses :py:attr:`peerapp.settings.OUR_ASN` and :py:attr:`peerapp.settings.OUR_ASN_NAME` to return correct
+        information about our own autonomous system, and uses :py:func:`privex.helpers.net.asn_to_name` to find
+        the name of unknown ASNs.
+
+        Uses both a local memory cache of ASN names in :py:attr:`.asn_cache` , as well as storing them in Redis
+        for persistence between runs.
+
+        Usage:
+
+            >>> PathLoader().get_as_name(210083)
+            'Privex Inc.'
+
+        :param int asn: An AS Number such as 210083 (as int or str)
+        :return str as_name: Human name of the ASN
+        """
+        try:
+            # r = self.redis
             asn = int(asn)
-            if asn == int(OUR_ASN):
-                return OUR_ASN_NAME
-            
-            if asn in self.asn_cache:
-                ca = self.asn_cache[asn]
-                # log.debug('Memory Cached: AS %s is "%s"', asn, ca)
-                return ca.decode() if type(ca) is bytes else str(ca)
-            # Check if the AS name is cached in redis
-            rk = f'asn:{asn}'
-            r_asn = r.get(rk)
-            if empty(r_asn):  # If not in Redis, then look it up and then cache in memory+redis 
-                n = self.asn_cache[asn] = asn_to_name(asn)
-                r.set(rk, n, ex=1200)
-                n = n.decode() if type(n) is bytes else str(n)
-                # log.debug('Queried DNS: AS %s is "%s"', asn, n)
-                return n
-            # It was found in Redis, so cache it in memory and return it.
-            n = r_asn.decode() if type(r_asn) is bytes else str(r_asn)
-            self.asn_cache[asn] = n
-            # log.debug('Found in Redis: AS %s is "%s"', asn, n)
+            if asn == int(OUR_ASN): return OUR_ASN_NAME
+            if asn in self.asn_cache: return self.asn_cache[asn]
+
+            n = self.asn_cache[asn] = str(asn_to_name(asn))
             return n
         except Exception as e:
             log.warning('Failed to look up ASN %s - exception: %s %s', asn, type(e), str(e))
             return f'Unknown ({asn})'
 
-    def parse_paths(self, family='v4', verbose=True):
+    def parse_paths(self, family='v4'):
+        verbose = self.verbose
         for path in self.paths[family]:
             try:
                 _p = PathParser(path)
@@ -111,44 +182,79 @@ class PathLoader:
         return f"{path['prefix']}-{path['first_hop']}-{path['source_asn']}"
 
     def store_paths(self):
-        c = self.couch
-        db = c[base.COUCH_DB]
-        log.info('Saving sane paths to CouchDB.')
+        """
+        Iterates over :py:attr:`.sane_paths` and inserts/updates the appropriate prefix/asn/community objects
+        into the database.
+
+        :return:
+        """
+        db = self.db
+        session = db.session
+        log.info('Saving sane paths to Postgres.')
         total_prefixes = len(self.sane_paths)
         for i, p in enumerate(self.sane_paths):
-            if (i % 100) == 0:
+            if (i % CHUNK_SIZE) == 0:
                 log.info('Saved %s out of %s prefixes.', i, total_prefixes)
+                session.commit()
             p_dic = dict(p)
-            p_id = p_dic['_id'] = self._make_id(p_dic)
-            doc_exists = p_id in db
-            doc = {**db[p_id], **p_dic} if doc_exists else p_dic
-            doc['last_seen'] = str(datetime.utcnow())
-            doc['as_name'] = self.get_as_name(p.source_asn)
-            if doc_exists:
-                n_doc = Document(db, doc['_id'])
-                n_doc.update(doc)
-                n_doc.save()
+            if p.source_asn in self._cache['asn_in_db']:
+                asn = self._cache['asn_in_db'][p.source_asn]
             else:
-                db.create_document(doc)
-            # log.debug('Saved prefix %s (id: %s) to database', doc['prefix'], doc['_id'])
+                asn = ASN.query.filter_by(asn=p.source_asn).first()
+                if not asn:
+                    asn = ASN(asn=p.source_asn, as_name=self.get_as_name(p.source_asn))
+                    session.add(asn)
+                self._cache['asn_in_db'][p.source_asn] = asn
+
+            communities = list(p_dic['communities'])
+
+            del p_dic['family']
+            del p_dic['source_asn']
+            del p_dic['first_hop']
+            del p_dic['communities']
+
+            for x, nh in enumerate(p_dic['next_hops']):
+                p_dic['next_hops'][x] = Inet(nh)
+
+            pfx = Prefix.query.filter_by(source_asn=asn, prefix=p_dic['prefix']).first()   # type: Prefix
+            if not pfx:
+                pfx = Prefix(**p_dic, source_asn=asn, last_seen=datetime.utcnow())
+            for k, v in p_dic.items():
+                setattr(pfx, k, v)
+            pfx.last_seen = datetime.utcnow()
+
+            for c in communities:
+                if c in self._cache['community_in_db']:
+                    comm = self._cache['community_in_db'][c]
+                else:
+                    comm = Community.query.filter_by(id=c).first()
+                    if not comm: comm = Community(id=c)
+                pfx.communities.append(comm)
+
+            session.add(pfx)
+
+        session.commit()
         log.info('Finished saving paths.')
 
     def summary(self):
+        if self.quiet:
+            return
         print('--- v4 paths ---')
         total_v4 = total_v6 = 0
-        for asn,num in self.as_counts['v4'].items():
+        for asn, num in self.as_counts['v4'].items():
             asname = self.get_as_name(asn)
             print(f'ASN: {asn:9} Name: {asname:20.20}     Prefixes: {num}')
             total_v4 += num
 
         print('--- v6 paths ---')
-        for asn,num in self.as_counts['v6'].items():
+        for asn, num in self.as_counts['v6'].items():
             asname = self.get_as_name(asn)
             print(f'ASN: {asn:9} Name: {asname:20.20}     Prefixes: {num}')
             total_v6 += num
 
         print('--- summary ---')
         print(f'total v4: {total_v4} -- total v6: {total_v6}')
+
 
 # found on this gist
 # https://gist.github.com/iwaseyusuke/df1e0300221b0c6aa1a98fc346621fdc
@@ -179,6 +285,7 @@ def unmarshal_any(any_msg):
     msg = msg_cls()
     any_msg.Unpack(msg)
     return msg
+
 
 def find_attr(obj: RepeatedCompositeContainer, type_url: str, unmarshal=True):
     type_url = type_url.lower().strip()

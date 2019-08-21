@@ -57,7 +57,7 @@ subparser = parser.add_subparsers()
 
 
 def runserver(opt):
-    from lg.lookingglass.views import flask
+    from lg.app import flask
 
     flask.run(
         host=opt.host,

@@ -19,13 +19,12 @@ After=network.target
 
 [Service]
 Type=simple
-User=LGUSER
+User=lg
 
-WorkingDirectory=/home/LGUSER/looking-glass/
-EnvironmentFile=/home/LGUSER/looking-glass/.env
+WorkingDirectory=/home/lg/looking-glass/
+EnvironmentFile=/home/lg/looking-glass/.env
 
-ExecStart=/home/LGUSER/looking-glass/venv/bin/python3.7 \
-            /home/LGUSER/looking-glass/manage.py queue
+ExecStart=/home/lg/looking-glass/run.sh queue
 
 Restart=always
 Environment=PYTHONUNBUFFERED=0
