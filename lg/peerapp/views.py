@@ -49,6 +49,7 @@ def json_err(err_code: str) -> Tuple[Response, int]:
 
 @flask.route('/api/v1/asn_prefixes')
 @flask.route('/api/v1/asn_prefixes/')
+@r_cache('lg_asn_aggr')
 def asn_prefixes():
     """
     Endpoint /api/v1/asn_prefixes/ - count the number of prefixes advertised by each ASN,
@@ -81,38 +82,38 @@ def asn_prefixes():
 
 
     """
-    @r_cache('lg_asn_aggr')
-    def _get_data():
-        asn_map = {}
 
-        query = 'SELECT a.asn, a.as_name, COUNT(p.prefix) as total_prefixes ' \
-                'FROM prefix p INNER JOIN asn a ON a.asn = p.asn_id ' \
-                'WHERE p.prefix << :pfx GROUP BY a.asn ORDER BY total_prefixes DESC;'
+    asn_map = {}
 
-        pfxs_v4 = db.session.execute(query, dict(pfx='0.0.0.0/0'))
-        pfxs_v6 = db.session.execute(query, dict(pfx='::/0'))
+    query = 'SELECT a.asn, a.as_name, COUNT(p.prefix) as total_prefixes ' \
+            'FROM prefix p INNER JOIN asn a ON a.asn = p.asn_id ' \
+            'WHERE p.prefix << :pfx GROUP BY a.asn ORDER BY total_prefixes DESC;'
 
-        for asn, asname, total_prefixes in pfxs_v4:
-            if asn not in asn_map: asn_map[asn] = dict(v4=0, v6=0)
-            asn_map[asn]['asn'] = asn
-            asn_map[asn]['as_name'] = asname
-            asn_map[asn]['v4'] = int(total_prefixes)
+    pfxs_v4 = db.session.execute(query, dict(pfx='0.0.0.0/0'))
+    pfxs_v6 = db.session.execute(query, dict(pfx='::/0'))
 
-        for asn, asname, total_prefixes in pfxs_v6:
-            if asn not in asn_map: asn_map[asn] = dict(v4=0, v6=0)
-            asn_map[asn]['asn'] = asn
-            asn_map[asn]['as_name'] = asname
-            asn_map[asn]['v6'] = int(total_prefixes)
-        for k, a in asn_map.items():
-            a['prefixes'] = a['v6'] + a['v4']
+    for asn, asname, total_prefixes in pfxs_v4:
+        if asn not in asn_map: asn_map[asn] = dict(v4=0, v6=0)
+        asn_map[asn]['asn'] = asn
+        asn_map[asn]['as_name'] = asname
+        asn_map[asn]['v4'] = int(total_prefixes)
 
-        return asn_map
+    for asn, asname, total_prefixes in pfxs_v6:
+        if asn not in asn_map: asn_map[asn] = dict(v4=0, v6=0)
+        asn_map[asn]['asn'] = asn
+        asn_map[asn]['as_name'] = asname
+        asn_map[asn]['v6'] = int(total_prefixes)
+    for k, a in asn_map.items():
+        a['prefixes'] = a['v6'] + a['v4']
 
-    return jsonify(_get_data())
+    # return asn_map
+
+    return jsonify(asn_map)
 
 
 @flask.route('/api/v1/prefixes')
 @flask.route('/api/v1/prefixes/')
+@r_cache(lambda: f'lg_prefixes:{request.values.get("asn")}:{request.values.get("family")}')
 def list_prefixes():
     """
     Endpoint /api/v1/prefixes/ - list all known prefixes, or filter by ASN / Family

@@ -1,7 +1,7 @@
 {
     "_meta": {
         "hash": {
-            "sha256": "a88a1338fe3fdaddb0e272c33354fa8ee4690934a7ae00a1bd50ba75b2f15629"
+            "sha256": "f51650d4b18fbca6298f8bc04a4724db95378b6210d6441f17e5f6b1fca2290d"
         },
         "pipfile-spec": 6,
         "requires": {
@@ -28,14 +28,6 @@
                 "sha256:5b94b49521f6456670fdb30cd82a4eca9412788a93fa6dd6df72c94d5a8ff2d7"
             ],
             "version": "==7.0"
-        },
-        "couchdb": {
-            "hashes": [
-                "sha256:1386a1a43f25bed3667e3b805222054940d674fa1967fa48e9d2012a18630ab7",
-                "sha256:13a28a1159c49f8346732e8724b9a4d65cba54bec017c4a7eeb1499fe88151d1"
-            ],
-            "index": "pypi",
-            "version": "==1.2"
         },
         "django-getenv": {
             "hashes": [
@@ -224,11 +216,11 @@
         },
         "privex-helpers": {
             "hashes": [
-                "sha256:7db903d3da3082ec598b130dd63a9b76488fe3cdcfea024ea8d86f3f4bac3ab1",
-                "sha256:c14d68ae168a603d699ec907319b09fdb4687c0cb9435151de9fe379b6bee7b8"
+                "sha256:7937dc8547a8f3f4bf7759911686f6be72b7f30464aec63f1622e547b5ed0042",
+                "sha256:fbc3f7c35715f2fe0336336a032851fd7aedbec50a553523bb535ec274637db5"
             ],
             "index": "pypi",
-            "version": "==1.2.1"
+            "version": "==1.2.2"
         },
         "privex-loghelper": {
             "hashes": [
