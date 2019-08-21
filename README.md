@@ -89,7 +89,7 @@ sudo apt update -y
 #  - Redis is used for caching, storing metadata about a request, and it's results upon completion
 #  - Yarn is required for building the Vue JS frontend files
 ####
-sudo apt install -y git python3.7 python3.7-venv redis-server
+sudo apt install -y git python3.7 python3.7-venv python3.7-dev libpq-dev redis-server
 
 # Install Yarn
 curl -sS https://dl.yarnpkg.com/debian/pubkey.gpg | sudo apt-key add -
@@ -118,7 +118,7 @@ sudo chmod +s /usr/bin/mtr-packet
 #  - GoBGP for obtaining the BGP prefix data from (can either run locally, or on another server
 ####
 
-sudo apt install -y postgresql libpq-dev
+sudo apt install -y postgresql
 
 # To avoid timezone issues, set your PostgreSQL timezone to UTC
 #
