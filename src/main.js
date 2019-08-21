@@ -60,7 +60,7 @@ const prefix_api = {
     },
     prefixes: async function(query = {}) {
         return new Promise(resolve => {
-            var url = '/api/v1/prefixes';
+            var url = '/api/v1/prefixes/';
             var first_q = true;
             for (var q in query) {
                 url += (first_q) ? '?' : '&'
