@@ -66,8 +66,8 @@ class PathLoader:
         try:
             self.channel = channel = grpc.insecure_channel(host)
             self.stub = gobgp_pb2_grpc.GobgpApiStub(channel)
-            if auto_load:
-                self.paths['v4'], self.paths['v6'] = self.load_paths(), self.load_paths(family=Family.AFI_IP6)
+            # if auto_load:
+            #     self.paths['v4'], self.paths['v6'] = self.load_paths(), self.load_paths(family=Family.AFI_IP6)
         except grpc._channel._Rendezvous as e:
             raise GoBGPException(f'Failed to connect to GoBGP server at {host} - reason: {type(e)} {str(e.details())}')
         except GoBGPException as e:
@@ -111,10 +111,8 @@ class PathLoader:
         """
 
         try:
-            return list(
-                self.stub.ListPath(
-                    ListPathRequest(family=Family(afi=family, safi=safi))
-                )
+            return self.stub.ListPath(
+                ListPathRequest(family=Family(afi=family, safi=safi))
             )
         except grpc._channel._Rendezvous as e:
             raise GoBGPException(f'Failed to connect to GoBGP server at {self.host} - '
@@ -154,7 +152,7 @@ class PathLoader:
 
     def parse_paths(self, family='v4'):
         verbose = self.verbose
-        for path in self.paths[family]:
+        for path in self.load_paths(Family.AFI_IP if family == 'v4' else Family.AFI_IP6):
             try:
                 _p = PathParser(path)
                 p = dict(_p)
@@ -164,8 +162,7 @@ class PathLoader:
                     log.debug('Skipping path %s as it is blacklisted.', np.prefix)
                     continue
 
-                self.sane_paths.append(np)
-
+                # self.sane_paths.append(np)
                 srcas = str(np.source_asn)
                 if empty(srcas):
                     log.warning('AS for path %s is empty. Not adding to count.', srcas)
@@ -174,9 +171,10 @@ class PathLoader:
                 ct_as[srcas] = 1 if srcas not in ct_as else ct_as[srcas] + 1
                 if verbose:
                     print(f'Prefix: {np.prefix}, Source ASN: {srcas}, Next Hop: {np.first_hop}')
+                
+                yield np
             except Exception:
                 log.exception('Unexpected exception while processing path %s', path)
-        return self.sane_paths
     
     def _make_id(self, path: dict):
         return f"{path['prefix']}-{path['first_hop']}-{path['source_asn']}"
@@ -191,10 +189,11 @@ class PathLoader:
         db = self.db
         session = db.session
         log.info('Saving sane paths to Postgres.')
-        total_prefixes = len(self.sane_paths)
-        for i, p in enumerate(self.sane_paths):
+        # total_prefixes = len(self.sane_paths)
+        i = 0
+        for p in self.parse_paths():
             if (i % CHUNK_SIZE) == 0:
-                log.info('Saved %s out of %s prefixes.', i, total_prefixes)
+                log.info('Saved %s prefixes.', i)
                 session.commit()
             p_dic = dict(p)
             if p.source_asn in self._cache['asn_in_db']:
@@ -232,6 +231,8 @@ class PathLoader:
                 pfx.communities.append(comm)
 
             session.add(pfx)
+            
+            i += 1
 
         session.commit()
         log.info('Finished saving paths.')
