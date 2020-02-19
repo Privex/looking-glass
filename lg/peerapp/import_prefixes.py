@@ -119,7 +119,7 @@ class PathLoader:
                                  f'reason: {type(e)} {str(e.details())}')
 
     @r_cache('asn:{}', format_args=[1, 'asn'], format_opt=FO.POS_AUTO)
-    def get_as_name(self, asn: Union[int, str]) -> str:
+    def _get_as_name(self, asn: Union[int, str]) -> str:
         """
         Get the human name for a given AS Number (ASN), with local memory caching + redis caching.
 
@@ -149,7 +149,19 @@ class PathLoader:
         except Exception as e:
             log.warning('Failed to look up ASN %s - exception: %s %s', asn, type(e), str(e))
             return f'Unknown ({asn})'
-
+    
+    def get_as_name(self, asn) -> ASN:
+        # Check if AS name is present in class memory cache
+        if asn not in self._cache['asn_in_db']:
+            as_name = ASN.query.filter_by(asn=asn).first()
+            # If AS name not found in DB, then look it up and store it in the DB
+            if not as_name:
+                as_name = ASN(asn=asn, as_name=self._get_as_name(asn))
+                self.db.session.add(as_name)
+            # Store AS name into memory cache
+            self._cache['asn_in_db'][asn] = as_name
+        return self._cache['asn_in_db'][asn]
+    
     def parse_paths(self, family='v4'):
         verbose = self.verbose
         for path in self.load_paths(Family.AFI_IP if family == 'v4' else Family.AFI_IP6):
@@ -195,40 +207,7 @@ class PathLoader:
             if (i % CHUNK_SIZE) == 0:
                 log.info('Saved %s prefixes.', i)
                 session.commit()
-            p_dic = dict(p)
-            if p.source_asn in self._cache['asn_in_db']:
-                asn = self._cache['asn_in_db'][p.source_asn]
-            else:
-                asn = ASN.query.filter_by(asn=p.source_asn).first()
-                if not asn:
-                    asn = ASN(asn=p.source_asn, as_name=self.get_as_name(p.source_asn))
-                    session.add(asn)
-                self._cache['asn_in_db'][p.source_asn] = asn
-
-            communities = list(p_dic['communities'])
-
-            del p_dic['family']
-            del p_dic['source_asn']
-            del p_dic['first_hop']
-            del p_dic['communities']
-
-            for x, nh in enumerate(p_dic['next_hops']):
-                p_dic['next_hops'][x] = Inet(nh)
-
-            pfx = Prefix.query.filter_by(source_asn=asn, prefix=p_dic['prefix']).first()   # type: Prefix
-            if not pfx:
-                pfx = Prefix(**p_dic, source_asn=asn, last_seen=datetime.utcnow())
-            for k, v in p_dic.items():
-                setattr(pfx, k, v)
-            pfx.last_seen = datetime.utcnow()
-
-            for c in communities:
-                if c in self._cache['community_in_db']:
-                    comm = self._cache['community_in_db'][c]
-                else:
-                    comm = Community.query.filter_by(id=c).first()
-                    if not comm: comm = Community(id=c)
-                pfx.communities.append(comm)
+            pfx = self._store_path(p)
 
             session.add(pfx)
             
@@ -236,6 +215,32 @@ class PathLoader:
 
         session.commit()
         log.info('Finished saving paths.')
+
+    def _store_path(self, p) -> Prefix:
+        p_dic = dict(p)
+        # Obtain AS name via in-memory cache, database cache, or DNS lookup
+        asn = self.get_as_name(p.source_asn)
+        communities = list(p_dic['communities'])
+        del p_dic['family']
+        del p_dic['source_asn']
+        del p_dic['first_hop']
+        del p_dic['communities']
+        for x, nh in enumerate(p_dic['next_hops']):
+            p_dic['next_hops'][x] = Inet(nh)
+        pfx = Prefix.query.filter_by(source_asn=asn, prefix=p_dic['prefix']).first()  # type: Prefix
+        if not pfx:
+            pfx = Prefix(**p_dic, source_asn=asn, last_seen=datetime.utcnow())
+        for k, v in p_dic.items():
+            setattr(pfx, k, v)
+        pfx.last_seen = datetime.utcnow()
+        for c in communities:
+            if c in self._cache['community_in_db']:
+                comm = self._cache['community_in_db'][c]
+            else:
+                comm = Community.query.filter_by(id=c).first()
+                if not comm: comm = Community(id=c)
+            pfx.communities.append(comm)
+        return pfx
 
     def summary(self):
         if self.quiet:
