@@ -1,13 +1,18 @@
 #!/usr/bin/env python3
+import asyncio
+
 import grpc
 import grpc._channel
 import logging
+
+from asyncpg import Record
+from dateutil.tz import tzutc
 from flask_sqlalchemy import SQLAlchemy
 from google.protobuf.pyext._message import RepeatedCompositeContainer
 from dataclasses import dataclass, field
-from typing import List, Union, Dict
+from typing import List, Union, Dict, Optional
 from ipaddress import IPv4Address, IPv6Address, IPv4Network, IPv6Network, ip_address, ip_network
-
+import asyncpg
 from psycopg2.extras import Inet
 from redis import Redis
 
@@ -18,9 +23,9 @@ from datetime import datetime
 from lg import base
 from lg.models import ASN, Prefix, Community
 from lg.peerapp.settings import OUR_ASN, OUR_ASN_NAME, LOCAL_IPS, IX_NET_VER, BLACKLIST_ROUTES, CHUNK_SIZE
-from lg.base import get_redis
+from lg.base import get_redis, get_pg, get_pg_pool
 from lg.exceptions import GoBGPException
-from privex.helpers import empty, asn_to_name, r_cache, FO
+from privex.helpers import empty, asn_to_name, r_cache, FO, convert_datetime
 
 log = logging.getLogger(__name__)
 
@@ -39,7 +44,8 @@ class PathLoader:
     _redis = None    # type: Redis
     _db = None       # type: SQLAlchemy
     asn_in_db = {}   # type: Dict[int, ASN]
-
+    pg_conn: Optional[asyncpg.connection.Connection]
+    
     _cache = dict(
         asn_in_db={},  # type: Dict[int, ASN]
         community_in_db={},   # type: Dict[int, Community]
@@ -62,6 +68,11 @@ class PathLoader:
         self.paths = dict(v6=[], v4=[])  # type: Dict[str, List[ListPathResponse]]
         self.as_counts = dict(v4={}, v6={})   # type: Dict[str, Dict[str, int]]
         self.sane_paths = []  # type: List[SanePath]
+
+        self.loop = asyncio.get_event_loop()
+
+        self.pg_conn = None
+        self.pg_pool = self.loop.run_until_complete(get_pg_pool())
 
         try:
             self.channel = channel = grpc.insecure_channel(host)
@@ -149,15 +160,21 @@ class PathLoader:
         except Exception as e:
             log.warning('Failed to look up ASN %s - exception: %s %s', asn, type(e), str(e))
             return f'Unknown ({asn})'
-    
-    def get_as_name(self, asn) -> ASN:
+
+    async def get_as_name(self, asn) -> ASN:
         # Check if AS name is present in class memory cache
         if asn not in self._cache['asn_in_db']:
-            as_name = ASN.query.filter_by(asn=asn).first()
-            # If AS name not found in DB, then look it up and store it in the DB
-            if not as_name:
-                as_name = ASN(asn=asn, as_name=self._get_as_name(asn))
-                self.db.session.add(as_name)
+            async with self.pg_pool.acquire() as conn:
+                as_name = await conn.fetchrow("SELECT * FROM asn WHERE asn.asn = $1 LIMIT 1;", asn)
+                # If AS name not found in DB, then look it up and store it in the DB
+                if as_name is None:
+                    as_name = dict(
+                        asn=asn, as_name=self._get_as_name(asn), created_at=datetime.utcnow(), updated_at=datetime.utcnow()
+                    )
+                    await conn.execute(
+                        "INSERT INTO asn (asn, as_name, created_at, update_at) VALUES ($1, $2, $3, $3);",
+                        asn, self._get_as_name(asn), as_name['created_at']
+                    )
             # Store AS name into memory cache
             self._cache['asn_in_db'][asn] = as_name
         return self._cache['asn_in_db'][asn]
@@ -191,7 +208,7 @@ class PathLoader:
     def _make_id(self, path: dict):
         return f"{path['prefix']}-{path['first_hop']}-{path['source_asn']}"
 
-    def store_paths(self):
+    async def store_paths(self, family='v4'):
         """
         Iterates over :py:attr:`.sane_paths` and inserts/updates the appropriate prefix/asn/community objects
         into the database.
@@ -199,27 +216,46 @@ class PathLoader:
         :return:
         """
         db = self.db
-        session = db.session
-        log.info('Saving sane paths to Postgres.')
-        # total_prefixes = len(self.sane_paths)
-        i = 0
-        for p in self.parse_paths():
-            if (i % CHUNK_SIZE) == 0:
-                log.info('Saved %s prefixes.', i)
-                session.commit()
-            pfx = self._store_path(p)
+        # session = db.session
+        
+        # loop = asyncio.get_running_loop()
+        loop = self.loop
+        # self.pg_conn = await get_pg()
 
-            session.add(pfx)
-            
+        log.info(' >>> Importing IP%s prefixes from GoBGP into PostgreSQL', family)
+
+        # total_prefixes = len(self.sane_paths)
+        log.info('Creating AsyncIO task queue for importing prefixes...')
+        i = 0
+        tasks = []
+        for p in self.parse_paths(family):
+            if (i % 10000) == 0:
+                log.info('Queued %s prefixes for import', i)
+                # session.commit()
+            tasks.append(asyncio.create_task(self._store_path(p)))
             i += 1
 
-        session.commit()
-        log.info('Finished saving paths.')
+            # session.add(pfx)
 
-    def _store_path(self, p) -> Prefix:
+        # i = 0
+        log.info('Saving %s paths to Postgres... this may take time (awaiting AsyncIO task queue)', len(tasks))
+        
+        await asyncio.gather(*tasks, return_exceptions=True)
+        # for i, t in enumerate(tasks):
+        #     if (i % CHUNK_SIZE) == 0:
+        #         log.info('Saved %s out of %s prefixes.', i, len(tasks))
+        #     await t
+        #     i += 1
+
+        # loop.close()
+        # session.commit()
+        log.info(' >>> Finished saving %s IP%s paths.', len(tasks), family)
+
+    async def _store_path(self, p) -> Prefix:
         p_dic = dict(p)
         # Obtain AS name via in-memory cache, database cache, or DNS lookup
-        asn = self.get_as_name(p.source_asn)
+        await self.get_as_name(p.source_asn)
+        asn_id = p.source_asn
         communities = list(p_dic['communities'])
         del p_dic['family']
         del p_dic['source_asn']
@@ -227,19 +263,63 @@ class PathLoader:
         del p_dic['communities']
         for x, nh in enumerate(p_dic['next_hops']):
             p_dic['next_hops'][x] = Inet(nh)
-        pfx = Prefix.query.filter_by(source_asn=asn, prefix=p_dic['prefix']).first()  # type: Prefix
-        if not pfx:
-            pfx = Prefix(**p_dic, source_asn=asn, last_seen=datetime.utcnow())
-        for k, v in p_dic.items():
-            setattr(pfx, k, v)
-        pfx.last_seen = datetime.utcnow()
-        for c in communities:
-            if c in self._cache['community_in_db']:
-                comm = self._cache['community_in_db'][c]
+
+        async with self.pg_pool.acquire() as conn:
+            pfx = await conn.fetchrow(
+                "SELECT * FROM prefix WHERE asn_id = $1 AND prefix.prefix = $2 LIMIT 1;",
+                asn_id, p_dic['prefix']
+            )   # type: Record
+            
+            # pfx = Prefix.query.filter_by(source_asn=asn_id, prefix=p_dic['prefix']).first()  # type: Prefix
+            # new_pfx = dict(**p_dic, asn_id=asn_id, last_seen=datetime.utcnow())
+            age = convert_datetime(p_dic.get('age'), fail_empty=False, if_empty=None)
+            if age is not None:
+                age = age.replace(tzinfo=None)
+            if not pfx:
+                await conn.execute(
+                    "INSERT INTO prefix ("
+                    "  asn_id, asn_path, prefix, next_hops, neighbor, ixp, last_seen, "
+                    "  age, created_at, updated_at"
+                    ")"
+                    "VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10);",
+                    asn_id, p_dic.get('asn_path', []), p_dic['prefix'], p_dic.get('next_hops', []),
+                    p_dic.get('neighbor'), p_dic.get('ixp'), datetime.utcnow(), age,
+                    datetime.utcnow(), datetime.utcnow()
+                )
+                
+                pfx = await conn.fetchrow(
+                    "SELECT * FROM prefix WHERE asn_id = $1 AND prefix.prefix = $2 LIMIT 1;",
+                    asn_id, p_dic['prefix']
+                )
             else:
-                comm = Community.query.filter_by(id=c).first()
-                if not comm: comm = Community(id=c)
-            pfx.communities.append(comm)
+                await conn.execute(
+                    "UPDATE prefix SET asn_path = $1, next_hops = $2, neighbor = $3, ixp = $4, last_seen = $5, "
+                    "age = $6, updated_at = $7 WHERE prefix = $8 AND asn_id = $9;",
+                    p_dic.get('asn_path', []), p_dic.get('next_hops', []),
+                    p_dic.get('neighbor'), p_dic.get('ixp'), datetime.utcnow(), age,
+                    datetime.utcnow(), p_dic['prefix'], asn_id
+                )
+                # for k, v in p_dic.items():
+                #     setattr(pfx, k, v)
+            
+            for c in communities:
+                if c not in self._cache['community_in_db']:
+                    try:
+                        await conn.execute(
+                            "insert into community (id, created_at, updated_at) values ($1, $2, $2);",
+                            c, datetime.utcnow()
+                        )
+                    except asyncpg.UniqueViolationError:
+                        pass
+                
+                try:
+                    await conn.execute(
+                        "insert into prefix_communities (prefix_id, community_id) values ($1, $2);",
+                        pfx['id'], c
+                    )
+                except asyncpg.UniqueViolationError:
+                    pass
+                # pfx.communities.append(comm)
         return pfx
 
     def summary(self):
