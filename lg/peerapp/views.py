@@ -8,6 +8,7 @@ from privex.helpers import empty, r_cache
 from sqlalchemy.orm import Query
 from lg import base
 from lg.models import Prefix
+from getenv import env
 
 flask = Blueprint('peerapp', __name__, template_folder='templates')
 
@@ -113,7 +114,7 @@ def asn_prefixes():
 
 @flask.route('/api/v1/prefixes')
 @flask.route('/api/v1/prefixes/')
-@r_cache(lambda: f'lg_prefixes:{request.values.get("asn")}:{request.values.get("family")}')
+@r_cache(lambda: f'lg_prefixes:{request.values.get("asn")}:{request.values.get("family")}:{request.values.get("limit")}:{request.values.get("skip")}')
 def list_prefixes():
     """
     Endpoint /api/v1/prefixes/ - list all known prefixes, or filter by ASN / Family
@@ -122,6 +123,11 @@ def list_prefixes():
 
         - `asn` (int) - An AS number to filter prefixes by, e.g. `210083` to see prefixes by Privex
         - `family` (str) - Either `v4` or `v6` to only show v4 or v6 prefixes
+        - `limit` (int) - Limit result set to this many prefixes. If not supplied, defaults to the
+                          DEFAULT_API_LIMIT .env setting. Cannot be more than the MAX_API_LIMIT
+                          .env setting.
+        - `skip` (int) - Skips this amount of prefixes before returning results. Can be used in
+                         combination with limit to paginate large data sets.
 
     **Example::**
 
@@ -133,6 +139,14 @@ def list_prefixes():
 
         # Get only IPv6 prefixes with a source_asn of `210083` (Privex's ASN)
         GET https://lg.privex.io/api/v1/prefixes/?asn=210083&family=v6
+
+        # Get both IPv4 and v6 prefixes that have a source_asn of `210083` (Privex's ASN), limiting
+        # results to the first 50 prefixes
+        GET https://lg.privex.io/api/v1/prefixes/?asn=210083&limit=50
+
+        # Get both IPv4 and v6 prefixes that have a source_asn of `210083` (Privex's ASN), showing
+        # the second batch of 50 prefixes
+        GET https://lg.privex.io/api/v1/prefixes/?asn=210083&limit=50&skip=50
 
     **Response:**
 
@@ -159,7 +173,26 @@ def list_prefixes():
     v = request.values
     asn = v.get('asn')
     family = v.get('family')
+    limit = v.get('limit')
+    skip = v.get('skip')
     # selector = {}
+
+    if empty(limit):
+        limit = int(env('DEFAULT_API_LIMIT', 1000))
+    else:
+        limit = int(limit)
+        max_limit = int(env('MAX_API_LIMIT', 10000))
+        if limit > max_limit:
+            limit = max_limit
+        elif limit < 0:
+            limit = 0
+
+    if empty(skip):
+        skip = 0
+    else:
+        skip = int(skip)
+        if skip < 0:
+            skip = 0
 
     p = Prefix.query   # type: Query
 
@@ -170,7 +203,8 @@ def list_prefixes():
         pfx = '0.0.0.0/0' if family == 'v4' else '::/0'
         p = p.filter(Prefix.prefix.op('<<')(pfx))
 
-    p = p.join(Prefix.communities, Prefix.source_asn).all()
+    p = p.order_by(Prefix.id).slice(skip, skip + limit).from_self()
+    p = p.join(Prefix.communities, Prefix.source_asn).order_by(Prefix.id).all()
 
     res = []
     for z in p:    # type: Prefix
