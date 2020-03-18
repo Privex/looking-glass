@@ -37,13 +37,20 @@ export default {
         }
     },
 
+    beforeRouteUpdate (to, from, next) {
+        this.$store.dispatch('loadPrefixes', {query: {family: to.params.family, asn: to.params.asn, page: to.params.page}});
+        next();
+    },
+
     mounted() {
-        this.$store.dispatch('loadPrefixes', {query: {asn: this.asn}});
+        this.$store.dispatch('loadPrefixes', {query: {family: this.family, asn: this.asn, page: this.page}});
     },
 
     computed: {
         prefixes() { return this.$store.state.prefixes },
         asn() { return this.$route.params.asn },
+        family() { return this.$route.params.family },
+        page() { return this.$route.params.page },
         asn_list() { return this.$store.state.asns },
         asn_name() { 
             var a = Number(this.asn);

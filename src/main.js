@@ -23,7 +23,7 @@ let routes = [];
 
 const peerapp_routes = [
     {path: '/peers', component: ASNList, name: 'peers'},
-    {path: '/prefixes/:asn', component: PrefixList, name: 'prefixes'},
+    {path: '/prefixes/:family/:asn/:page', component: PrefixList, name: 'prefixes'},
 ];
 
 const LG_ENABLED = ('VUE_APP_SHOW_LG' in process.env) ? is_true(process.env.VUE_APP_SHOW_LG) : true;
@@ -63,6 +63,9 @@ const prefix_api = {
             var url = '/api/v1/prefixes/';
             var first_q = true;
             for (var q in query) {
+                if (q === 'family' && query[q] === 'all') {
+                    continue;
+                }
                 url += (first_q) ? '?' : '&'
                 url += `${q}=${query[q]}`;
                 first_q = false;
