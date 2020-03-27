@@ -27,18 +27,25 @@
                 </tr>
             </tbody>
         </table>
+
+        <Pager v-bind:pageCount="page_count" v-bind:value="current_page" v-on:input="turn_page($event)" />
     </div>
 </template>
 
 <script>
+import Pager from './Pager.vue'
 
 export default {
     name: 'PrefixList',
     props: [],
     data: function() {
         return {
-            
+            page_count: 5,
+            current_page: this.$route.params.page
         }
+    },
+    components: {
+        Pager
     },
 
     methods: {
@@ -47,10 +54,16 @@ export default {
                 return `${path.slice(0,5).join(', ')} ... ${path.slice(-3)}`
             }
             return path.join(', ')
+        },
+
+        turn_page: function(to) {
+            this.current_page = to;
+            this.$router.push({name: 'prefixes', params: {family: this.family, asn: this.asn, page: this.current_page}});
         }
     },
 
     beforeRouteUpdate (to, from, next) {
+        this.current_page = to.params.page;
         this.$store.dispatch('loadPrefixes', {query: {family: to.params.family, asn: to.params.asn, page: to.params.page}});
         next();
     },
