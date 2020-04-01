@@ -50,13 +50,18 @@ def json_err(err_code: str) -> Tuple[Response, int]:
 
 @flask.route('/api/v1/asn_prefixes')
 @flask.route('/api/v1/asn_prefixes/')
-@r_cache('lg_asn_aggr')
+@r_cache(lambda: f'lg_asn_aggr:{request.values.get("asn")}')
 def asn_prefixes():
     """
     Endpoint /api/v1/asn_prefixes/ - count the number of prefixes advertised by each ASN,
     aggregating them by family (v4 and v6).
 
-    Example:
+    GET options::
+
+        - `asn` (int) - Fetch results for just one particular ASN number, e.g. `210083`
+                        to see data for Privex. If not supplied, fetches data for all ASNs.
+
+    **Example:**
 
         GET https://lg.privex.io/api/v1/asn_prefixes/
 
@@ -84,14 +89,22 @@ def asn_prefixes():
 
     """
 
+    v = request.values
+    asn = v.get('asn')
     asn_map = {}
 
-    query = 'SELECT a.asn, a.as_name, COUNT(p.prefix) as total_prefixes ' \
-            'FROM prefix p INNER JOIN asn a ON a.asn = p.asn_id ' \
-            'WHERE p.prefix << :pfx GROUP BY a.asn ORDER BY total_prefixes DESC;'
-
-    pfxs_v4 = db.session.execute(query, dict(pfx='0.0.0.0/0'))
-    pfxs_v6 = db.session.execute(query, dict(pfx='::/0'))
+    if empty(asn):
+        query = 'SELECT a.asn, a.as_name, COUNT(p.prefix) as total_prefixes ' \
+                'FROM prefix p INNER JOIN asn a ON a.asn = p.asn_id ' \
+                'WHERE p.prefix << :pfx GROUP BY a.asn ORDER BY total_prefixes DESC;'
+        pfxs_v4 = db.session.execute(query, dict(pfx='0.0.0.0/0'))
+        pfxs_v6 = db.session.execute(query, dict(pfx='::/0'))
+    else:
+        query = 'SELECT a.asn, a.as_name, COUNT(p.prefix) as total_prefixes ' \
+                'FROM prefix p INNER JOIN asn a ON a.asn = p.asn_id ' \
+                'WHERE p.prefix << :pfx AND a.asn = :asn GROUP BY a.asn;'
+        pfxs_v4 = db.session.execute(query, dict(pfx='0.0.0.0/0', asn=asn))
+        pfxs_v6 = db.session.execute(query, dict(pfx='::/0', asn=asn))
 
     for asn, asname, total_prefixes in pfxs_v4:
         if asn not in asn_map: asn_map[asn] = dict(v4=0, v6=0)
@@ -107,8 +120,6 @@ def asn_prefixes():
     for k, a in asn_map.items():
         a['prefixes'] = a['v6'] + a['v4']
 
-    # return asn_map
-
     return jsonify(asn_map)
 
 
@@ -121,7 +132,7 @@ def list_prefixes():
 
     GET options::
 
-        - `asn` (int) - An AS number to filter prefixes by, e.g. `210083` to see prefixes by Privex
+        - `asn` (int) - An ASN number to filter prefixes by, e.g. `210083` to see prefixes by Privex
         - `family` (str) - Either `v4` or `v6` to only show v4 or v6 prefixes
         - `limit` (int) - Limit result set to this many prefixes. If not supplied, defaults to the
                           DEFAULT_API_LIMIT .env setting. Cannot be more than the MAX_API_LIMIT
@@ -150,24 +161,38 @@ def list_prefixes():
 
     **Response:**
 
+        There will be a `pages` object at the start of the response, to support pagination. This
+        object indicates how many pages are necessary to retrieve all data depending on the `limit`
+        GET option.
+
     .. code-block:: json
 
-        [
-            {
-                "age": "Tue, 20 Aug 2019 22:48:32 GMT",
-                "as_name": "Privex Inc.",
-                "asn_path": [210083],
-                "communities": [300, 400],
-                "family": "v4",
-                "first_hop": "185.130.44.1",
-                "ixp": "N/A",
-                "last_seen": "Wed, 21 Aug 2019 02:30:00 GMT",
-                "neighbor": null,
-                "next_hops": ["185.130.44.1"],
-                "prefix": "185.130.44.0/24",
-                "source_asn": 210083
-            },
-        ]
+        {
+            "pages":
+                {
+                    "all": 1,
+                    "v4": 1,
+                    "v6": 1,
+                },
+
+            "prefixes":
+                [
+                    {
+                        "age": "Tue, 20 Aug 2019 22:48:32 GMT",
+                        "as_name": "Privex Inc.",
+                        "asn_path": [210083],
+                        "communities": [300, 400],
+                        "family": "v4",
+                        "first_hop": "185.130.44.1",
+                        "ixp": "N/A",
+                        "last_seen": "Wed, 21 Aug 2019 02:30:00 GMT",
+                        "neighbor": null,
+                        "next_hops": ["185.130.44.1"],
+                        "prefix": "185.130.44.0/24",
+                        "source_asn": 210083
+                    },
+                ]
+        }
 
     """
     v = request.values
@@ -218,4 +243,20 @@ def list_prefixes():
             )
         )
 
-    return jsonify(res)
+    asn_data = asn_prefixes().get_json()
+
+    v4_count = 0
+    v6_count = 0
+    for value in asn_data.values():
+        v4_count += value['v4']
+        v6_count += value['v6']
+
+    response = {}
+    response['pages'] = {
+            'all': int((v4_count + v6_count) / limit) + ((v4_count + v6_count) % limit > 0),
+            'v4': int(v4_count / limit) + (v4_count % limit > 0),
+            'v6': int(v6_count / limit) + (v6_count % limit > 0)
+        }
+    response['prefixes'] = res
+
+    return jsonify(response)
