@@ -3,13 +3,13 @@
         <h1>Prefixes advertised to us by AS{{ asn }} {{ asn_name }}</h1>
 
         <div class="ui pointing menu">
-            <router-link class="item" :to="{name: 'prefixes', params: {family: 'all', asn: asn, page: page}}" exact active-class="active">
+            <router-link class="item" :to="{name: 'prefixes', params: {family: 'all', asn: asn, page: current_page}}" exact active-class="active">
                 All
             </router-link>
-            <router-link class="item" :to="{name: 'prefixes', params: {family: 'v4', asn: asn, page: page}}" exact active-class="active">
+            <router-link class="item" :to="{name: 'prefixes', params: {family: 'v4', asn: asn, page: current_page}}" exact active-class="active">
                 IPv4
             </router-link>
-            <router-link class="item" :to="{name: 'prefixes', params: {family: 'v6', asn: asn, page: page}}" exact active-class="active">
+            <router-link class="item" :to="{name: 'prefixes', params: {family: 'v6', asn: asn, page: current_page}}" exact active-class="active">
                 IPv6
             </router-link>
         </div>
@@ -28,7 +28,18 @@
             </tbody>
         </table>
 
-        <Pager v-bind:pageCount="page_count" v-bind:value="current_page" v-on:input="turn_page($event)" />
+        pages.all is {{ this.$store.state.pages.all }}
+        <br/>
+        pages.v4 is {{ this.$store.state.pages.v4 }}
+        <br/>
+        pages.v6 is {{ this.$store.state.pages.v6 }}
+        <br/>
+        page_count is {{ page_count }}
+        <br/>
+        current_page is {{ current_page }}
+        <br/>
+
+        <Pager v-if="page_count > 1" v-bind:pageCount="page_count" v-bind:value="current_page" v-on:input="turn_page($event)" />
     </div>
 </template>
 
@@ -38,12 +49,6 @@ import Pager from './Pager.vue'
 export default {
     name: 'PrefixList',
     props: [],
-    data: function() {
-        return {
-            page_count: 5,
-            current_page: this.$route.params.page
-        }
-    },
     components: {
         Pager
     },
@@ -57,13 +62,11 @@ export default {
         },
 
         turn_page: function(to) {
-            this.current_page = to;
-            this.$router.push({name: 'prefixes', params: {family: this.family, asn: this.asn, page: this.current_page}});
+            this.$router.push({name: 'prefixes', params: {family: this.family, asn: this.asn, page: to}});
         }
     },
 
     beforeRouteUpdate (to, from, next) {
-        this.current_page = to.params.page;
         this.$store.dispatch('loadPrefixes', {query: {family: to.params.family, asn: to.params.asn, page: to.params.page}});
         next();
     },
@@ -77,6 +80,8 @@ export default {
         asn() { return this.$route.params.asn },
         family() { return this.$route.params.family },
         page() { return this.$route.params.page },
+        page_count() { return this.$store.state.pages[this.$route.params.family] },
+        current_page() { return this.$route.params.page <= this.$store.state.pages[this.$route.params.family] ? this.$route.params.page : this.$store.state.pages[this.$route.params.family] },
         asn_list() { return this.$store.state.asns },
         asn_name() { 
             var a = Number(this.asn);
