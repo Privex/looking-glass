@@ -28,8 +28,7 @@ const peerapp_routes = [
 
 const LG_ENABLED = ('VUE_APP_SHOW_LG' in process.env) ? is_true(process.env.VUE_APP_SHOW_LG) : true;
 const PEERAPP_ENABLED = ('VUE_APP_SHOW_PEERAPP' in process.env) ? is_true(process.env.VUE_APP_SHOW_PEERAPP) : true;
-const DEFAULT_API_LIMIT = ('DEFAULT_API_LIMIT' in process.env) ? process.env.DEFAULT_API_LIMIT : 1000;
-console.log(process.env);
+const DEFAULT_API_LIMIT = ('VUE_APP_DEFAULT_API_LIMIT' in process.env) ? process.env.VUE_APP_DEFAULT_API_LIMIT : 1000;
 
 if (PEERAPP_ENABLED && !LG_ENABLED) {
     routes.push({path: '/', component: ASNList, name: 'home'})

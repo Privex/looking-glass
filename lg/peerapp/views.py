@@ -135,7 +135,7 @@ def list_prefixes():
         - `asn` (int) - An ASN number to filter prefixes by, e.g. `210083` to see prefixes by Privex
         - `family` (str) - Either `v4` or `v6` to only show v4 or v6 prefixes
         - `limit` (int) - Limit result set to this many prefixes. If not supplied, defaults to the
-                          DEFAULT_API_LIMIT .env setting. Cannot be more than the MAX_API_LIMIT
+                          VUE_APP_DEFAULT_API_LIMIT .env setting. Cannot be more than the VUE_APP_MAX_API_LIMIT
                           .env setting.
         - `skip` (int) - Skips this amount of prefixes before returning results. Can be used in
                          combination with limit to paginate large data sets.
@@ -203,14 +203,14 @@ def list_prefixes():
     # selector = {}
 
     if empty(limit):
-        limit = int(env('DEFAULT_API_LIMIT', 1000))
+        limit = int(env('VUE_APP_DEFAULT_API_LIMIT', 1000))
     else:
         limit = int(limit)
-        max_limit = int(env('MAX_API_LIMIT', 10000))
+        max_limit = int(env('VUE_APP_MAX_API_LIMIT', 10000))
         if limit > max_limit:
             limit = max_limit
-        elif limit < 0:
-            limit = 0
+        elif limit < 1:
+            limit = 1
 
     if empty(skip):
         skip = 0

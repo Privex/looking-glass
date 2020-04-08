@@ -3,13 +3,13 @@
         <h1>Prefixes advertised to us by AS{{ asn }} {{ asn_name }}</h1>
 
         <div class="ui pointing menu">
-            <router-link class="item" :to="{name: 'prefixes', params: {family: 'all', asn: asn, page: current_page}}" exact active-class="active">
+            <router-link class="item" :to="{name: 'prefixes', params: {family: 'all', asn: asn, page: current_page_family('all')}}" exact active-class="active">
                 All
             </router-link>
-            <router-link class="item" :to="{name: 'prefixes', params: {family: 'v4', asn: asn, page: current_page}}" exact active-class="active">
+            <router-link class="item" :to="{name: 'prefixes', params: {family: 'v4', asn: asn, page: current_page_family('v4')}}" exact active-class="active">
                 IPv4
             </router-link>
-            <router-link class="item" :to="{name: 'prefixes', params: {family: 'v6', asn: asn, page: current_page}}" exact active-class="active">
+            <router-link class="item" :to="{name: 'prefixes', params: {family: 'v6', asn: asn, page: current_page_family('v6')}}" exact active-class="active">
                 IPv6
             </router-link>
         </div>
@@ -63,6 +63,10 @@ export default {
 
         turn_page: function(to) {
             this.$router.push({name: 'prefixes', params: {family: this.family, asn: this.asn, page: to}});
+        },
+
+        current_page_family: function(fam) {
+            return this.$route.params.page <= this.$store.state.pages[fam] ? this.$route.params.page : this.$store.state.pages[fam];
         }
     },
 
