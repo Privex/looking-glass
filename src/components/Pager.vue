@@ -3,10 +3,18 @@
     <button
       class="ui labeled icon button"
       :class="{disabled: !has_prev}"
-      @click="$emit('input', page - 1);"
+      @click="$emit('input', 1);"
     >
-      <i class="left chevron icon" />
-      Previous Page
+      <i class="angle double left icon" />
+      First
+    </button>
+    <button
+      class="ui labeled icon button"
+      :class="{disabled: !has_prev}"
+      @click="$emit('input', parseInt(page) - 1);"
+    >
+      <i class="angle left icon" />
+      Previous
     </button>
     <button class="ui button disabled">
       <i class="page icon" />
@@ -15,10 +23,18 @@
     <button
       class="ui right labeled icon button"
       :class="{disabled: !has_next}"
-      @click="$emit('input', page + 1);"
+      @click="$emit('input', parseInt(page) + 1);"
     >
-      Next Page
-      <i class="right chevron icon" />
+      Next
+      <i class="angle right icon" />
+    </button>
+    <button
+      class="ui right labeled icon button"
+      :class="{disabled: !has_next}"
+      @click="$emit('input', last_page);"
+    >
+      Last
+      <i class="angle double right icon" />
     </button>
   </div>
 </template>
@@ -37,7 +53,10 @@ export default {
     },
     computed: {
         page() {
-            return this.value
+            return this.value;
+        },
+        last_page() {
+            return this.pageCount;
         },
         has_next() {
             return this.page < this.pageCount;

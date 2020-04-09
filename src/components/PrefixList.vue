@@ -28,17 +28,6 @@
             </tbody>
         </table>
 
-        pages.all is {{ this.$store.state.pages.all }}
-        <br/>
-        pages.v4 is {{ this.$store.state.pages.v4 }}
-        <br/>
-        pages.v6 is {{ this.$store.state.pages.v6 }}
-        <br/>
-        page_count is {{ page_count }}
-        <br/>
-        current_page is {{ current_page }}
-        <br/>
-
         <Pager v-if="page_count > 1" v-bind:pageCount="page_count" v-bind:value="current_page" v-on:input="turn_page($event)" />
     </div>
 </template>
