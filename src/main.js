@@ -67,11 +67,11 @@ const prefix_api = {
                 if (q === 'family' && query[q] === 'all') {
                     continue;
                 }
-		if (q === 'page') {
-		    var page = parseInt(query[q]);
-		    url += (first_q) ? '?' : '&';
-		    url += `skip=${(page-1)*DEFAULT_API_LIMIT}&limit=${DEFAULT_API_LIMIT}`;
-		} else {
+                if (q === 'page') {
+                    var page = parseInt(query[q]);
+                    url += (first_q) ? '?' : '&';
+                    url += `skip=${(page-1)*DEFAULT_API_LIMIT}&limit=${DEFAULT_API_LIMIT}`;
+                } else {
                     url += (first_q) ? '?' : '&';
                     url += `${q}=${query[q]}`;
                 }
