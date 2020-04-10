@@ -23,11 +23,12 @@ let routes = [];
 
 const peerapp_routes = [
     {path: '/peers', component: ASNList, name: 'peers'},
-    {path: '/prefixes/:asn', component: PrefixList, name: 'prefixes'},
+    {path: '/prefixes/:family/:asn/:page', component: PrefixList, name: 'prefixes'},
 ];
 
 const LG_ENABLED = ('VUE_APP_SHOW_LG' in process.env) ? is_true(process.env.VUE_APP_SHOW_LG) : true;
 const PEERAPP_ENABLED = ('VUE_APP_SHOW_PEERAPP' in process.env) ? is_true(process.env.VUE_APP_SHOW_PEERAPP) : true;
+const DEFAULT_API_LIMIT = ('VUE_APP_DEFAULT_API_LIMIT' in process.env) ? process.env.VUE_APP_DEFAULT_API_LIMIT : 1000;
 
 if (PEERAPP_ENABLED && !LG_ENABLED) {
     routes.push({path: '/', component: ASNList, name: 'home'})
@@ -63,8 +64,17 @@ const prefix_api = {
             var url = '/api/v1/prefixes/';
             var first_q = true;
             for (var q in query) {
-                url += (first_q) ? '?' : '&'
-                url += `${q}=${query[q]}`;
+                if (q === 'family' && query[q] === 'all') {
+                    continue;
+                }
+                if (q === 'page') {
+                    var page = parseInt(query[q]);
+                    url += (first_q) ? '?' : '&';
+                    url += `skip=${(page-1)*DEFAULT_API_LIMIT}&limit=${DEFAULT_API_LIMIT}`;
+                } else {
+                    url += (first_q) ? '?' : '&';
+                    url += `${q}=${query[q]}`;
+                }
                 first_q = false;
             }
             return fetch(url)
@@ -84,6 +94,7 @@ const store = new Vuex.Store({
   state: {
     asns: {},
     prefixes: [],
+    pages: {},
     lg_enabled: LG_ENABLED,
     peerapp_enabled: PEERAPP_ENABLED
   },
@@ -92,7 +103,8 @@ const store = new Vuex.Store({
       state.asns = asns;
     },
     replacePrefixes (state, prefixes) {
-      state.prefixes = prefixes;
+      state.prefixes = prefixes.prefixes;
+      state.pages = prefixes.pages;
     },
   },
   actions: {
