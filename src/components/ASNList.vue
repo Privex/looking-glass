@@ -37,7 +37,7 @@ export default {
             return comparison
         },
         select_asn(asn) {
-            this.$router.push({name: 'prefixes', params: {asn: asn}})
+            this.$router.push({name: 'prefixes', params: {family: 'all', asn: asn, page: 1}})
         },
     },
 

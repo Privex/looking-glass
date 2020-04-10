@@ -163,8 +163,10 @@ cd looking-glass
 pip3 install pipenv
 
 # Create, activate and install python dependencies into a virtualenv with Python 3.7
+# PIPENV_DONT_LOAD_ENV=1 stops pipenv from caching the .env file, so you can change settings
+# without having to quit & restart the shell
 pipenv install
-pipenv shell
+PIPENV_DONT_LOAD_ENV=1 pipenv shell
 
 cp .env.example .env
 # edit .env with your favourite editor, adjust as needed
@@ -340,7 +342,16 @@ sudo gobgpd -f gbgp.conf
 
 Common configuration options are included in `.env.example` and are generally self explanatory.
 
-For information about each configuration option, check the comments in the following files:
+For the BGP Peers and Prefixes part of the application, the following settings are useful for
+controlling pagination of prefix data:
+
+VUE_APP_DEFAULT_API_LIMIT = limit results from the api/v1/prefixes API to this many prefixes when
+the limit parameter is not explicitly provided (the UI uses this default value)
+
+VUE_APP_MAX_API_LIMIT = maximum value that the limit parameter of the api/v1/prefixes API can be
+explicitly set to
+
+For information about other configuration options, check the comments in the following files:
 
  - `lg/base.py` - Shared settings between both apps
  - `lg/lookingglass/settings.py` - Settings specific to the Trace / Ping tool

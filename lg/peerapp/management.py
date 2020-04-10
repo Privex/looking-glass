@@ -4,6 +4,7 @@ from lg.peerapp import settings
 from lg.peerapp.import_prefixes import PathLoader
 import logging
 import textwrap
+import asyncio
 
 log = logging.getLogger('peerapp.managedotpy')
 
@@ -16,12 +17,15 @@ PEERS_HELP = textwrap.dedent('''\
 
 
 def load_prefixes(opt):
+    loop = asyncio.get_event_loop()
+    
     pl = PathLoader(settings.GBGP_HOST)
-    pl.parse_paths()
-    pl.parse_paths('v6')
+    # pl.parse_paths()
+    # pl.parse_paths('v6')
     if opt.verbose:
         pl.summary()
-    pl.store_paths()
+    loop.run_until_complete(pl.store_paths('v4'))
+    loop.run_until_complete(pl.store_paths('v6'))
 
 
 def add_parsers(subparser: argparse._SubParsersAction):

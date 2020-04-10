@@ -25,6 +25,7 @@ import pickle
 from enum import Enum
 from typing import Tuple, Any
 
+import asyncpg
 import pika
 import redis
 import json
@@ -112,6 +113,20 @@ PG_CONF = pg = dict(
     host=env('PSQL_HOST', 'localhost'),
     port=int(env('PSQL_PORT', 5432)),
 )
+
+
+async def get_pg_pool(loop=None) -> asyncpg.pool.Pool:
+    return await asyncpg.create_pool(
+        host=PG_CONF['host'], port=PG_CONF['port'], user=PG_CONF['user'], password=PG_CONF['password'],
+        database=PG_CONF['dbname'], loop=loop
+    )
+
+
+async def get_pg() -> asyncpg.connection.Connection:
+    return await asyncpg.connect(
+        host=PG_CONF['host'], port=PG_CONF['port'], user=PG_CONF['user'], password=PG_CONF['password'],
+        database=PG_CONF['dbname']
+    )
 
 if empty(pg['password']):
     pgc = f"postgresql://{pg['user']}@{pg['host']}:{pg['port']}/{pg['dbname']}"
