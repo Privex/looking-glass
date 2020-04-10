@@ -345,10 +345,10 @@ Common configuration options are included in `.env.example` and are generally se
 For the BGP Peers and Prefixes part of the application, the following settings are useful for
 controlling pagination of prefix data:
 
-DEFAULT_API_LIMIT = limit results from the api/v1/prefixes API to this many prefixes when
+VUE_APP_DEFAULT_API_LIMIT = limit results from the api/v1/prefixes API to this many prefixes when
 the limit parameter is not explicitly provided (the UI uses this default value)
 
-MAX_API_LIMIT = maximum value that the limit parameter of the api/v1/prefixes API can be
+VUE_APP_MAX_API_LIMIT = maximum value that the limit parameter of the api/v1/prefixes API can be
 explicitly set to
 
 For information about other configuration options, check the comments in the following files:
