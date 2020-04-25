@@ -29,6 +29,13 @@
       </router-link>
     </div>
 
+    <Pager
+            v-if="page_count > 1"
+            :page-count="page_count"
+            :value="current_page"
+            @input="turn_page($event)"
+    />
+
     <table class="ui table compact">
       <thead>
         <tr><th>Prefix</th><th>Next Hop</th><th>IXP</th><th>ASN Path</th></tr>

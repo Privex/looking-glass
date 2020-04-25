@@ -69,7 +69,13 @@
         </div>
       </div>
     </div>
-
+    <div class="ui divider"></div>
+    <Pager
+            v-if="page_count > 1"
+            :page-count="page_count"
+            :value="current_page"
+            @input="turn_page($event)"
+    />
     <table class="ui table compact">
       <thead>
         <tr>
