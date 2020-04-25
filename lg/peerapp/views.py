@@ -294,7 +294,7 @@ def list_prefixes():
     p = p.filter(Prefix.last_seen > (latest_last_seen - timedelta(seconds=PREFIX_TIMEOUT)))
 
     p = p.order_by(Prefix.id).slice(skip, skip + limit).from_self()
-    p = p.join(Prefix.communities, Prefix.source_asn).order_by(Prefix.id).all()
+    p = p.join(Prefix.communities, Prefix.source_asn).order_by(Prefix.id)
 
     res = []
     for z in p:    # type: Prefix
