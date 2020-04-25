@@ -52,16 +52,20 @@ class Prefix(db.Model):
     PREFIX_FILTER = IPFilter
     
     id = db.Column(db.Integer, primary_key=True)
-    asn_id = db.Column(db.Integer, db.ForeignKey('asn.asn'), nullable=False)
+    asn_id = db.Column(db.Integer, db.ForeignKey('asn.asn'), nullable=False, index=True)
     asn_path = db.Column(postgresql.ARRAY(db.Integer, dimensions=1), nullable=True)
-    prefix = db.Column(postgresql.CIDR(), nullable=False)
+    prefix = db.Column(postgresql.CIDR(), nullable=False, index=True)
     next_hops = db.Column(postgresql.ARRAY(postgresql.INET(), dimensions=1), nullable=True)
     neighbor = db.Column(postgresql.INET(), nullable=True)
     ixp = db.Column(db.String(255), default='N/A', server_default='N/A')
-    last_seen = db.Column(db.DateTime, nullable=True)
+    last_seen = db.Column(db.DateTime, nullable=True, index=True)
     age = db.Column(db.DateTime, nullable=True)
     communities = db.relationship('Community', secondary=prefix_communities, lazy='subquery',
                                   backref=db.backref('prefixes', lazy=True))
+    
+    # idx_asn_id = db.Index('idx_asn_id1', 'asn_id')
+    # idx_prefix = db.Index('idx_prefix1', 'prefix')
+    # idx_last_seen = db.Index('idx_last_seen1', 'last_seen')
 
     @property
     def is_stale(self):
@@ -162,6 +166,11 @@ class Prefix(db.Model):
     
     def __repr__(self):
         return self.__str__()
+
+
+db.Index('idx_asn_id1', 'asn_id')
+db.Index('idx_prefix1', 'prefix')
+db.Index('idx_last_seen1', 'last_seen')
 
 
 class Community(db.Model):
