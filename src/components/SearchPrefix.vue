@@ -16,6 +16,17 @@
       If you enter an IP address, such as <code>185.130.44.1</code> - it will search for prefixes which contain
       that IP address, e.g. <code>185.130.44.0/24</code>
     </p>
+    <div class="ui segment">
+      <p>
+        <strong>NOTE:</strong>
+        Prefix rows marked in red, with <code>(STALE)</code> next to the prefix, are considered "stale" by the system.
+        <br/>
+        This means they're more than <strong>{{ info.prefix_timeout_warn }} seconds</strong> older than the latest
+        prefix in the system. This could simply be caused by our prefix importer cron running a little slow, or it may
+        be a sign that the ASN it belongs to has stopped advertising that prefix.
+      </p>
+    </div>
+
     <p>Here are some examples for you to try:</p>
 
     <div class="ui grid">
@@ -122,15 +133,12 @@
             </p>
           </td>
         </tr>
-        <tr
-          v-for="p of search_results"
-          :key="p._id"
-        >
-          <td
-            class="link"
-            @click="prefix_modal(p)"
-          >
-            {{ p.prefix }}
+        <tr v-for="p of search_results"
+            :key="p._id"
+            :class="(p.stale) ? 'error' : ''">
+          <td>
+            <span class="link" @click="prefix_modal(p)">{{ p.prefix }}</span>
+            <span v-if="p.stale"> (STALE)</span>
           </td>
           <td>{{ p.first_hop }}</td>
           <td>{{ p.ixp }}</td>
@@ -218,6 +226,9 @@
             asn_list() {
                 return this.$store.state.asns
             },
+            info() {
+              return this.$store.state.info;
+            },
             asn_name() {
                 var a = Number(this.asn);
                 if (a in this.asn_list) {
@@ -230,7 +241,7 @@
         watch: {
             search_prefix(val) {
                 if (this.current_page !== 1 && this.current_page !== 0) {
-                    this.$router.push({name: 'prefix_search', params: {page: '1'}})
+                    this.$router.push({name: 'prefix_search', params: {page: 1}})
                 } else {
                     this.run_search()
                 }
@@ -238,7 +249,7 @@
             },
             search_asn(val) {
                 if (this.current_page !== 1 && this.current_page !== 0) {
-                    this.$router.push({name: 'prefix_search', params: {page: '1'}})
+                    this.$router.push({name: 'prefix_search', params: {page: 1}})
                 } else {
                     this.run_search()
                 }

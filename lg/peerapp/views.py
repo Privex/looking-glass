@@ -13,7 +13,7 @@ from lg.exceptions import InvalidIP
 from lg.models import Prefix, IPFilter
 from getenv import env
 
-from lg.peerapp.settings import PREFIX_TIMEOUT
+from lg.peerapp.settings import PREFIX_TIMEOUT, PREFIX_TIMEOUT_WARN
 
 flask = Blueprint('peerapp', __name__, template_folder='templates')
 
@@ -67,6 +67,8 @@ def lg_info():
         git_branch=base.GIT_BRANCH,
         latest_prefix_time=last_prefix.last_seen,
         latest_prefix=last_prefix.to_dict(),
+        prefix_timeout=PREFIX_TIMEOUT,
+        prefix_timeout_warn=PREFIX_TIMEOUT_WARN,
         total_prefixes=Prefix.query.count(),
 
     )

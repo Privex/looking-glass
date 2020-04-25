@@ -5,10 +5,11 @@ from ipaddress import ip_network, IPv4Network
 from typing import Union
 
 from flask_sqlalchemy import BaseQuery
-from privex.helpers import empty, ip_is_v4
+from privex.helpers import empty, ip_is_v4, r_cache
 from sqlalchemy.dialects import postgresql
 
 from lg.base import get_app
+from lg.peerapp.settings import PREFIX_TIMEOUT_WARN
 
 log = logging.getLogger(__name__)
 
@@ -62,6 +63,13 @@ class Prefix(db.Model):
     communities = db.relationship('Community', secondary=prefix_communities, lazy='subquery',
                                   backref=db.backref('prefixes', lazy=True))
 
+    @property
+    def is_stale(self):
+        latest_prefix_seen = Prefix.latest_seen_prefixes().last_seen
+        if (latest_prefix_seen - self.last_seen) > datetime.timedelta(seconds=PREFIX_TIMEOUT_WARN):
+            return True
+        return False
+
     @classmethod
     def filter_prefix(cls, prefix: str, exact=True, op: IPFilter = IPFilter.WITHIN_EQUAL, asn=None):
         """
@@ -103,6 +111,7 @@ class Prefix(db.Model):
         return q.filter(cls.prefix.op(op)(prefix)).order_by('prefix')
 
     @classmethod
+    @r_cache(lambda cls, limit=1, single=True: f'lg_latest_seen:{limit}:{single}', 60)
     def latest_seen_prefixes(cls, limit=1, single=True) -> Union["Prefix", BaseQuery]:
         """
         
@@ -145,7 +154,7 @@ class Prefix(db.Model):
             id=z.id, prefix=z.prefix, age=z.age, source_asn=z.source_asn.asn, as_name=z.source_asn.as_name,
             communities=[c.id for c in z.communities], family='v4' if is_v4 else 'v6', first_hop=z.next_hops[0],
             next_hops=z.next_hops, ixp=z.ixp, last_seen=z.last_seen, neighbor=z.neighbor, asn_path=z.asn_path,
-            created_at=z.created_at
+            created_at=z.created_at, stale=z.is_stale
         )
     
     def __str__(self):

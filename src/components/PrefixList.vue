@@ -2,6 +2,17 @@
   <div class="ui raised segment main-box">
     <h1>Prefixes advertised to us by AS{{ asn }} {{ asn_name }}</h1>
 
+    <div class="ui segment">
+      <p>
+        <strong>NOTE:</strong>
+        Prefix rows marked in red, with <code>(STALE)</code> next to the prefix, are considered "stale" by the system.
+        <br/>
+        This means they're more than <strong>{{ info.prefix_timeout_warn }} seconds</strong> older than the latest
+        prefix in the system. This could simply be caused by our prefix importer cron running a little slow, or it may
+        be a sign that the ASN it belongs to has stopped advertising that prefix.
+      </p>
+    </div>
+
     <div class="ui pointing menu">
       <router-link
         class="item"
@@ -44,12 +55,11 @@
         <tr
           v-for="p of prefixes"
           :key="p._id"
+          :class="(p.stale) ? 'error' : ''"
         >
-          <td
-            class="link"
-            @click="prefix_modal(p)"
-          >
-            {{ p.prefix }}
+          <td>
+            <span class="link" @click="prefix_modal(p)">{{ p.prefix }}</span>
+            <span v-if="p.stale"> (STALE)</span>
           </td>
           <td>{{ p.first_hop }}</td>
           <td>{{ p.ixp }}</td>
@@ -112,7 +122,10 @@ export default {
                 return this.asn_list[Number(this.asn)].as_name;
             }
             return "";
-        }
+        },
+        info() {
+          return this.$store.state.info;
+        },
     },
 
     mounted() {

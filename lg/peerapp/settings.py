@@ -66,11 +66,19 @@ PREFIX_TIMEOUT = env_int('PREFIX_TIMEOUT', 1800)
 Prefixes with a ``last_seen`` more than PREFIX_TIMEOUT seconds ago from the newest prefix in the database
 will be considered stale, and thus not shown on the ASN summary page, nor the individual prefix list for an ASN.
 
-Default: ``1800`` seconds = 20 minutes.
+Default: ``3600`` seconds = 60 minutes.
 
 We compare against the newest last_seen timestamp in the database, allowing you to run import_prefixes
 as often as you like, e.g. once per 30-60 mins, without having prefixes go stale due to import_prefixes
 being ran occasionally.
+"""
+
+PREFIX_TIMEOUT_WARN = env_int('PREFIX_TIMEOUT_WARN', 1800)
+"""
+Prefixes with a ``last_seen`` more than PREFIX_TIMEOUT_WARN seconds ago from the newest prefix in the database
+will be marked in yellow, to signify that they're potentially stale / no longer being advertised.
+
+Default: ``1800`` seconds = 30 minutes
 """
 
 BLACKLIST_ROUTES = [ip_network(ip) for ip in BLACKLIST_ROUTES]
