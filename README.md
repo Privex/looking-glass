@@ -62,7 +62,7 @@ To run either of them, you need at the least:
  - **Ubuntu Bionic Server 18.04** is recommended, however other distros may work
  - **Python 3.7+** is strongly recommended (3.6 is the bare minimum)
  - **Redis** - Used for caching data, plus storing user's trace/ping requests and their results
- - **Yarn** and **NodeJS** for compiling the Vue JS components
+ - **Yarn** and **NodeJS** for compiling the Vue JS components (last tested on Node v12.13.0)
  - Minimal hardware requirements, will probably run on as little as 512mb RAM and 1 core
 
 For the trace / ping tool (the main "looking glass" part):

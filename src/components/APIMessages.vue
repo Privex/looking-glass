@@ -1,12 +1,19 @@
 <template>
-    <div class="error-list">
-        <div class="ui message error" v-if="api_error.error">
-            <strong>ERROR:</strong> {{ api_error.message }}
-        </div>
-        <div class="ui message success" v-for="msg in api_messages">
-            {{ msg }}
-        </div>
+  <div class="error-list">
+    <div
+      v-if="api_error.error"
+      class="ui message error"
+    >
+      <strong>ERROR:</strong> {{ api_error.message }}
     </div>
+    <div
+      v-for="msg in api_messages"
+      :key="msg"
+      class="ui message success"
+    >
+      {{ api_messages[msg] }}
+    </div>
+  </div>
 </template>
 <script>
     export default {
