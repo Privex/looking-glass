@@ -107,7 +107,7 @@
                 <td class="link" @click="prefix_modal(p)">{{ p.prefix }}</td>
                 <td>{{ p.first_hop }}</td>
                 <td>{{ p.ixp }}</td>
-                <td>{{ p.source_asn }} ( {{ p.as_name }} )</td>
+                <td>{{ p.source_asn }} ( {{ trim_name(p.as_name) }} )</td>
                 <td>{{ trim_path(p.asn_path, 2, 2) }}</td>
             </tr>
             </tbody>
@@ -131,7 +131,7 @@
 <script>
     import Pager from './Pager.vue'
     import PrefixView from './PrefixView.vue'
-    import {trim_path} from '../helpers'
+    import {trim_path, trim_name} from '../helpers'
     import { debounce } from 'underscore'
     import APIMessages from "./APIMessages";
 
@@ -153,15 +153,25 @@
 
         watch: {
             search_prefix(val) {
-                this.run_search()
+                if (this.current_page !== 1 && this.current_page !== 0) {
+                    this.$router.push({name: 'prefix_search', params: {page: '1'}})
+                } else {
+                    this.run_search()
+                }
+                // this.run_search()
             },
             search_asn(val) {
-                this.run_search()
+                if (this.current_page !== 1 && this.current_page !== 0) {
+                    this.$router.push({name: 'prefix_search', params: {page: '1'}})
+                } else {
+                    this.run_search()
+                }
             },
 
         },
         methods: {
             trim_path: trim_path,
+            trim_name: trim_name,
             run_search () {
                 if (this.has_error) this.$store.dispatch('clearError', {});
                 if (this.search_results.length > 0) this.$store.dispatch('clearPrefixSearch', {});
@@ -171,13 +181,8 @@
             turn_page (to) {
                 this.$router.push({
                     name: 'prefix_search',
-                    params: {
-                        // prefix: this.search_prefix,
-                        // asn: this.search_asn,
-                        page: to
-                    }
+                    params: {page: to}
                 });
-                // this.run_search();
             },
 
             prefix_modal(m) {
