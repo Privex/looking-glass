@@ -102,8 +102,9 @@ case "$1" in
         : ${HOST='127.0.0.1'}
         : ${PORT='8282'}
         : ${GU_WORKERS='4'} # Number of Gunicorn worker processes
+        : ${GU_TIMEOUT='600'} # Gunicorn request timeout
 
-        pipenv run gunicorn -b "${HOST}:${PORT}" -w "$GU_WORKERS" wsgi
+        pipenv run gunicorn -b "${HOST}:${PORT}" -w "$GU_WORKERS" --timeout "$GU_TIMEOUT" wsgi
         ;;
     *)
         msg bold red "Unknown command.\n"
