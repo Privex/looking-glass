@@ -31,7 +31,7 @@ const peerapp_routes = [
 
 const LG_ENABLED = ('VUE_APP_SHOW_LG' in process.env) ? is_true(process.env.VUE_APP_SHOW_LG) : true;
 const PEERAPP_ENABLED = ('VUE_APP_SHOW_PEERAPP' in process.env) ? is_true(process.env.VUE_APP_SHOW_PEERAPP) : true;
-const DEFAULT_API_LIMIT = ('VUE_APP_DEFAULT_API_LIMIT' in process.env) ? process.env.VUE_APP_DEFAULT_API_LIMIT : 1000;
+const DEFAULT_API_LIMIT = ('VUE_APP_DEFAULT_API_LIMIT' in process.env) ? process.env.VUE_APP_DEFAULT_API_LIMIT : 100;
 
 if (PEERAPP_ENABLED && !LG_ENABLED) {
     routes.push({path: '/', component: ASNList, name: 'home'})
@@ -98,6 +98,10 @@ const prefix_api = {
                     var asn = parseInt(query[q]);
                     url += (first_q) ? '?' : '&';
                     url += `asn=${asn}`;
+                } else if (q === 'page') {
+                    var page = parseInt(query[q]);
+                    url += (first_q) ? '?' : '&';
+                    url += `skip=${(page - 1) * DEFAULT_API_LIMIT}&limit=${DEFAULT_API_LIMIT}`;
                 } else {
                     url += (first_q) ? '?' : '&';
                     url += `${q}=${query[q]}`;
@@ -237,8 +241,8 @@ const store = new Vuex.Store({
           commit('setSelectedPrefix', p);
           return p;
       },
-      searchPrefixes({commit}, {address, exact = false, asn = null}) {
-          return prefix_api.get_prefix(address, {exact: exact, asn: asn})
+      searchPrefixes({commit}, {address, exact = false, asn = null, page = 1}) {
+          return prefix_api.get_prefix(address, {exact: exact, asn: asn, page: page})
               .then(results => {
                   commit('setPrefixSearchResults', results['result']);
                   commit('setPrefixSearchPages', results['pages']);

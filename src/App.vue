@@ -10,7 +10,7 @@
       <router-link class="item" to="/peers" active-class="active" v-if="lg_enabled && peerapp_enabled">
         BGP Peers and Prefixes
       </router-link>
-      <router-link class="item" to="/prefixes/search" active-class="active" v-if="peerapp_enabled">
+      <router-link class="item" to="/prefixes/search/1" active-class="active" v-if="peerapp_enabled">
         Search BGP Prefixes
       </router-link>
     </div>

@@ -170,13 +170,14 @@
             },
             turn_page (to) {
                 this.$router.push({
-                    name: 'search_prefixes',
+                    name: 'prefix_search',
                     params: {
                         // prefix: this.search_prefix,
                         // asn: this.search_asn,
                         page: to
                     }
                 });
+                // this.run_search();
             },
 
             prefix_modal(m) {
@@ -192,9 +193,10 @@
                     // this.$store.dispatch('clearPrefixSearch', {})
                 }
             },
-            _searchPrefixes(address, exact=false, asn=null) {
+            _searchPrefixes(address, exact=false, asn=null, page=null) {
                 this.loading = true;
-                this.$store.dispatch('searchPrefixes', {address, exact, asn})
+                page = ( page === null ) ? this.page : page;
+                this.$store.dispatch('searchPrefixes', {address, exact, asn, page: page})
                     .then((res) => {
                         this.loading = false;
                     }).catch((res) => {
@@ -254,6 +256,13 @@
                 }
                 return "";
             }
+        },
+
+        beforeRouteUpdate(to, from, next) {
+            if (this.has_error) this.$store.dispatch('clearError', {});
+            if (this.search_results.length > 0) this.$store.dispatch('clearPrefixSearch', {});
+            this._searchPrefixes(this.search_prefix, false, this.search_asn, to.params.page);
+            next();
         },
 
         mounted() {

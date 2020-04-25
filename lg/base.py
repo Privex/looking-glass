@@ -54,7 +54,7 @@ ENABLE_LG = env_bool('ENABLE_LG', True)
 ENABLE_PEERAPP = env_bool('ENABLE_PEERAPP', True)
 """Enable the peer information application (peerapp) - Default: True (enabled)"""
 
-DEFAULT_API_LIMIT = env_int('VUE_APP_DEFAULT_API_LIMIT', 1000)
+DEFAULT_API_LIMIT = env_int('VUE_APP_DEFAULT_API_LIMIT', 100)
 """Default for ``limit`` field on API queries."""
 
 MAX_API_LIMIT = env_int('VUE_APP_MAX_API_LIMIT', 10000)
