@@ -22,6 +22,7 @@ flask-sqlalchemy = "*"
 psycopg2 = "*"
 flask-migrate = "*"
 asyncpg = "*"
+attrs = "*"
 
 [requires]
 python_version = "3.8"
