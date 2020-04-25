@@ -1,13 +1,22 @@
 {% extends 'base.html' %}
+{% block head %}
+    {% if hot_loader %}
+        <link href="{{ hot_loader_url }}/app.js" rel="preload" as="script">
+    {% endif %}
+{% endblock %}
 {% block content %}
 <div id="app">
 
 </div>
 {% endblock %}
 {% block scripts %}
-   <script src="/static/vue-dist/js/app.js"></script>
-   <script src="/static/vue-dist/js/chunk-vendors.js"></script>
-   <script>
-   Vue.config.devtools = true
-   </script>
+    {% if hot_loader %}
+        <script src="{{ hot_loader_url }}/app.js"></script>
+    {% else %}
+        <script src="/static/vue-dist/js/app.js"></script>
+        <script src="/static/vue-dist/js/chunk-vendors.js"></script>
+    {% endif %}
+    <script>
+        Vue.config.devtools = true
+    </script>
 {% endblock %}

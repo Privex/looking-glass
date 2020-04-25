@@ -9,6 +9,10 @@ class InvalidHostException(PrivexException):
     pass
 
 
+class InvalidIP(PrivexException):
+    pass
+
+
 class MissingArgsException(PrivexException):
     pass
 

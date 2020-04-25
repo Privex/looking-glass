@@ -22,10 +22,12 @@ import ipaddress
 import logging
 import os
 import pickle
+from collections import namedtuple
 from enum import Enum
-from typing import Tuple, Any
+from typing import Tuple, Any, Dict, List
 
 import asyncpg
+import attr
 import pika
 import redis
 import json
@@ -36,7 +38,7 @@ from flask_sqlalchemy import SQLAlchemy
 from getenv import env
 from pika.adapters.blocking_connection import BlockingChannel
 from privex.loghelper import LogHelper
-from privex.helpers import env_bool, empty, settings as hlp_settings
+from privex.helpers import env_bool, empty, settings as hlp_settings, Git, AttribDictable, env_int
 
 load_dotenv()
 
@@ -52,6 +54,15 @@ ENABLE_LG = env_bool('ENABLE_LG', True)
 ENABLE_PEERAPP = env_bool('ENABLE_PEERAPP', True)
 """Enable the peer information application (peerapp) - Default: True (enabled)"""
 
+DEFAULT_API_LIMIT = env_int('VUE_APP_DEFAULT_API_LIMIT', 100)
+"""Default for ``limit`` field on API queries."""
+
+MAX_API_LIMIT = env_int('VUE_APP_MAX_API_LIMIT', 10000)
+"""Max value allowed for ``limit`` field on API queries."""
+
+HOT_LOADER = env_bool('HOT_LOADER', False)
+HOT_LOADER_URL = env('HOT_LOADER_URL', 'http://localhost:8080')
+
 #######################################
 #
 # Logging Configuration
@@ -64,7 +75,9 @@ ENABLE_PEERAPP = env_bool('ENABLE_PEERAPP', True)
 # Valid environment log levels (from least to most severe) are:
 # DEBUG, INFO, WARNING, ERROR, FATAL, CRITICAL
 
-lh = LogHelper('lg')
+LOG_FORMATTER = logging.Formatter('[%(asctime)s]: %(name)-25s -> %(funcName)-20s : %(levelname)-8s:: %(message)s')
+
+lh = LogHelper('lg', formatter=LOG_FORMATTER)
 
 CONSOLE_LOG_LEVEL = env('LOG_LEVEL', None)
 CONSOLE_LOG_LEVEL = logging.getLevelName(str(CONSOLE_LOG_LEVEL).upper()) if CONSOLE_LOG_LEVEL is not None else None
@@ -75,7 +88,7 @@ if CONSOLE_LOG_LEVEL is None:
 lh.add_console_handler(level=CONSOLE_LOG_LEVEL)
 
 DBG_LOG, ERR_LOG = os.path.join(BASE_DIR, 'logs', 'debug.log'), os.path.join(BASE_DIR, 'logs', 'error.log')
-lh.add_timed_file_handler(DBG_LOG, when='D', interval=1, backups=14, level=logging.INFO)
+lh.add_timed_file_handler(DBG_LOG, when='D', interval=1, backups=14, level=CONSOLE_LOG_LEVEL)
 lh.add_timed_file_handler(ERR_LOG, when='D', interval=1, backups=14, level=logging.WARNING)
 
 log = lh.get_logger()
@@ -105,6 +118,78 @@ COUCH_DB = cf['COUCH_DB'] = env('COUCH_DB', 'peersapp')
 """Name of the database to use for CouchDB. Will automatically be created if it doesn't exist."""
 
 COUCH_VIEWS = os.path.join(BASE_DIR, 'lg', 'peerapp', 'couch_views')
+
+AppError = namedtuple('AppError', 'code message status', defaults=['', 500])
+
+_ERRORS: List[AppError] = [
+    AppError('UNKNOWN_ERROR', "An unknown error has occurred. Please contact the administrator of this site.", 500),
+    AppError('METHOD_NOT_ALLOWED', "This API endpoint does not allow the requested HTTP method (GET/POST/PUT etc.)", 405),
+    AppError('NO_REQUEST', "No request was sent.", 400),
+    AppError('INV_HOST', "IP address / Hostname is invalid", 400),
+    AppError('INV_ADDRESS', "IP address / Prefix is invalid", 400),
+    AppError('INV_PROTO', "Invalid IP protocol, choose one of 'any', 'ipv4', 'ipv6'", 400),
+    AppError('NOT_FOUND', "No records could be found for that object", 404),
+    AppError('NO_HOST', 'No IP Address / Hostname specified', 400),
+]
+ERRORS: Dict[str, AppError] = {err.code: err for err in _ERRORS}
+ERRORS['UNKNOWN'] = ERRORS['UNKNOWN_ERROR']
+DEFAULT_ERR: AppError = ERRORS['UNKNOWN_ERROR']
+
+SHOW_VERSION = env_bool('SHOW_VERSION', True)
+
+GIT_COMMIT, GIT_TAG, GIT_BRANCH = '', '', ''
+
+if SHOW_VERSION:
+    try:
+        GIT_COMMIT = Git(BASE_DIR).get_current_commit()
+    except Exception:
+        log.warning("Failed to get current Git commit")
+    try:
+        GIT_TAG = Git(BASE_DIR).get_current_tag()
+    except Exception:
+        log.warning("Failed to get current Git tag")
+    try:
+        GIT_BRANCH = Git(BASE_DIR).get_current_branch()
+    except Exception:
+        log.warning("Failed to get current Git branch")
+
+
+@attr.s
+class APIParam(AttribDictable):
+    value_type = attr.ib(type=str)
+    required = attr.ib(type=bool, default=False)
+    description = attr.ib(type=str, default="")
+
+
+@attr.s
+class APIRoute(AttribDictable):
+    endpoint = attr.ib(type=str)
+    alt_endpoints = attr.ib(type=List[str], factory=list)
+    url_params = attr.ib(type=Dict[str, APIParam], factory=dict)
+    get_params = attr.ib(type=Dict[str, APIParam], factory=dict)
+    post_params = attr.ib(type=Dict[str, APIParam], factory=dict)
+    description = attr.ib(type=str, default="")
+    
+    @property
+    def full_url(self) -> str:
+        from flask import request
+        return f"{request.host_url.strip('/')}/{self.endpoint.lstrip('/')}"
+
+
+API_ROUTES: Dict[str, APIRoute] = {
+    # "example": APIRoute(
+    #   endpoint="/api/v1/example/",
+    #   alt_endpoints=['/api/v1/example/<lorem>'],
+    #   description="Returns all X's and Y's",
+    #   url_params=dict(lorem=APIParam('string', False, 'A Lorem as a string'))
+    # )
+}
+
+
+def add_api_route(name: str, api_route: APIRoute):
+    API_ROUTES[name] = api_route
+    return API_ROUTES[name]
+
 
 PG_CONF = pg = dict(
     user=env('PSQL_USER', 'lg'),
