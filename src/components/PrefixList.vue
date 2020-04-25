@@ -19,27 +19,44 @@
                 <tr><th>Prefix</th><th>Next Hop</th><th>IXP</th><th>ASN Path</th></tr>
             </thead>
             <tbody>
-                <tr v-for="prefix of prefixes" :key="prefix._id">
-                    <td>{{ prefix.prefix }}</td>
-                    <td>{{ prefix.first_hop }}</td>
-                    <td>{{ prefix.ixp }}</td>
-                    <td>{{ trim_path(prefix.asn_path) }}</td>
+                <tr v-for="p of prefixes" :key="p._id">
+                    <td class="link" @click="prefix_modal(p)">{{ p.prefix }}</td>
+                    <td>{{ p.first_hop }}</td>
+                    <td>{{ p.ixp }}</td>
+                    <td>{{ trim_path(p.asn_path) }}</td>
                 </tr>
             </tbody>
         </table>
 
         <Pager v-if="page_count > 1" v-bind:pageCount="page_count" v-bind:value="current_page" v-on:input="turn_page($event)" />
+
+        <div class="ui modal" id="prefix-modal">
+            <i class="close icon"></i>
+            <div class="header" v-if="prefix.prefix">
+                Prefix {{ prefix.prefix }}
+            </div>
+            <PrefixView :prefix="prefix" />
+        </div>
     </div>
+
+
 </template>
 
 <script>
 import Pager from './Pager.vue'
+import PrefixView from './PrefixView.vue'
 
 export default {
     name: 'PrefixList',
     props: [],
     components: {
-        Pager
+        Pager, PrefixView
+    },
+
+    data: function () {
+        return {
+            prefix: {'prefix': null}
+        }
     },
 
     methods: {
@@ -56,6 +73,10 @@ export default {
 
         current_page_family: function(fam) {
             return this.$route.params.page <= this.$store.state.pages[fam] ? this.$route.params.page : this.$store.state.pages[fam];
+        },
+        prefix_modal(m) {
+            this.prefix = m;
+            $('#prefix-modal').modal('show');
         }
     },
 
@@ -76,7 +97,7 @@ export default {
         page_count() { return this.$store.state.pages[this.$route.params.family] },
         current_page() { return this.$route.params.page <= this.$store.state.pages[this.$route.params.family] ? this.$route.params.page : this.$store.state.pages[this.$route.params.family] },
         asn_list() { return this.$store.state.asns },
-        asn_name() { 
+        asn_name() {
             var a = Number(this.asn);
             if(a in this.asn_list) {
                 return this.asn_list[Number(this.asn)].as_name;

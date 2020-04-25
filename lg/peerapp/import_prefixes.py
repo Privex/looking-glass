@@ -6,10 +6,8 @@ import grpc._channel
 import logging
 
 from asyncpg import Record
-from dateutil.tz import tzutc
 from flask_sqlalchemy import SQLAlchemy
 from google.protobuf.pyext._message import RepeatedCompositeContainer
-from dataclasses import dataclass, field
 from typing import List, Union, Dict, Optional
 from ipaddress import IPv4Address, IPv6Address, IPv4Network, IPv6Network, ip_address, ip_network
 import asyncpg
@@ -17,15 +15,17 @@ from psycopg2.extras import Inet
 from redis import Redis
 
 from gobgp import gobgp_pb2, gobgp_pb2_grpc, attribute_pb2
+from gobgp.attribute_pb2 import LargeCommunity
 from gobgp.gobgp_pb2 import ListPathRequest, ListPathResponse, Family
-from enum import Enum
 from datetime import datetime
 from lg import base
 from lg.models import ASN, Prefix, Community
-from lg.peerapp.settings import OUR_ASN, OUR_ASN_NAME, LOCAL_IPS, IX_NET_VER, BLACKLIST_ROUTES, CHUNK_SIZE
-from lg.base import get_redis, get_pg, get_pg_pool
+from lg.peerapp.settings import OUR_ASN, OUR_ASN_NAME, LOCAL_IPS, BLACKLIST_ROUTES, CHUNK_SIZE
+from lg.base import get_redis, get_pg_pool
 from lg.exceptions import GoBGPException
-from privex.helpers import empty, asn_to_name, r_cache, FO, convert_datetime
+from privex.helpers import empty, asn_to_name, r_cache, FO, convert_datetime, DictObject
+
+from lg.peerapp.types import AddrFamily, SanePath
 
 log = logging.getLogger(__name__)
 
@@ -68,7 +68,9 @@ class PathLoader:
         self.paths = dict(v6=[], v4=[])  # type: Dict[str, List[ListPathResponse]]
         self.as_counts = dict(v4={}, v6={})   # type: Dict[str, Dict[str, int]]
         self.sane_paths = []  # type: List[SanePath]
-
+        
+        self.path_tasks = {}
+        
         self.loop = asyncio.get_event_loop()
 
         self.pg_conn = None
@@ -161,8 +163,10 @@ class PathLoader:
             log.warning('Failed to look up ASN %s - exception: %s %s', asn, type(e), str(e))
             return f'Unknown ({asn})'
 
-    async def get_as_name(self, asn) -> ASN:
+    async def get_as_name(self, asn) -> Union[ASN, dict]:
         # Check if AS name is present in class memory cache
+        if empty(asn):
+            return dict(asn=None, as_name="Invalid ASN", created_at=datetime.utcnow(), updated_at=datetime.utcnow())
         if asn not in self._cache['asn_in_db']:
             async with self.pg_pool.acquire() as conn:
                 as_name = await conn.fetchrow("SELECT * FROM asn WHERE asn.asn = $1 LIMIT 1;", asn)
@@ -172,7 +176,7 @@ class PathLoader:
                         asn=asn, as_name=self._get_as_name(asn), created_at=datetime.utcnow(), updated_at=datetime.utcnow()
                     )
                     await conn.execute(
-                        "INSERT INTO asn (asn, as_name, created_at, update_at) VALUES ($1, $2, $3, $3);",
+                        "INSERT INTO asn (asn, as_name, created_at, updated_at) VALUES ($1, $2, $3, $3);",
                         asn, self._get_as_name(asn), as_name['created_at']
                     )
             # Store AS name into memory cache
@@ -208,6 +212,24 @@ class PathLoader:
     def _make_id(self, path: dict):
         return f"{path['prefix']}-{path['first_hop']}-{path['source_asn']}"
 
+    async def _store_path_task(self, task_id: int, path: SanePath):
+        log.debug("[_store_path_task ID %d] Storing path %s", task_id, path)
+        task = self.path_tasks['tasks'][task_id]
+        res = False
+        try:
+            await self._store_path(path)
+            res = True
+            task['status'], task['message'] = 'success', f'Successfully stored {path}'
+        except Exception as e:
+            log.exception("[_store_path_task ID %d] Failed to store path %s", task_id, path)
+            task['status'], task['message'] = 'fail', f'Failed to store path {path} - Exception: {type(e)} {str(e)}'
+            self.path_tasks['failed_tasks'].append(dict(task))
+        
+        t = self.path_tasks['success_tasks'] if res else self.path_tasks['failed_tasks']
+        t.append(dict(task))
+        del self.path_tasks['tasks'][task_id]
+        return res
+    
     async def store_paths(self, family='v4'):
         """
         Iterates over :py:attr:`.sane_paths` and inserts/updates the appropriate prefix/asn/community objects
@@ -227,31 +249,52 @@ class PathLoader:
         # total_prefixes = len(self.sane_paths)
         log.info('Creating AsyncIO task queue for importing prefixes...')
         i = 0
-        tasks = []
-        for p in self.parse_paths(family):
+        
+        pt = self.path_tasks = DictObject(tasks={}, failed_tasks=[], success_tasks=[])
+        
+        for path in self.parse_paths(family):
             if (i % 10000) == 0:
                 log.info('Queued %s prefixes for import', i)
                 # session.commit()
-            tasks.append(asyncio.create_task(self._store_path(p)))
+            pt.tasks[i] = dict(
+                id=i,
+                task=asyncio.create_task(self._store_path_task(i, path)),
+                status='started',
+                message=''
+            )
+            # tasks.append(asyncio.create_task(self._store_path(p)))
+            # self.path_tasks.append(loop.call_soon(self._store_path, p))
             i += 1
 
             # session.add(pfx)
 
         # i = 0
-        log.info('Saving %s paths to Postgres... this may take time (awaiting AsyncIO task queue)', len(tasks))
+        log.info('Saving %s paths to Postgres... this may take time (awaiting AsyncIO task queue)', len(pt.tasks))
+        # await asyncio.gather(*tasks, return_exceptions=True)
+        while len(pt.tasks) > 0:
+            log.info(
+                "Import Status ::: %d paths pending, %d paths imported, %d paths failed",
+                len(pt.tasks), len(pt.success_tasks), len(pt.failed_tasks)
+            )
+            await asyncio.sleep(10)
+        log.info("")
         
-        await asyncio.gather(*tasks, return_exceptions=True)
-        # for i, t in enumerate(tasks):
+        for task in pt.failed_tasks:
+            log.warning("[Failed Task %d] Message %s", task['id'], task['message'])
+        # for i, t in enumerate(pt):
         #     if (i % CHUNK_SIZE) == 0:
-        #         log.info('Saved %s out of %s prefixes.', i, len(tasks))
-        #     await t
+        #         log.info('Saved %s out of %s prefixes.', i, len(pt))
+        #     t.
         #     i += 1
 
         # loop.close()
         # session.commit()
-        log.info(' >>> Finished saving %s IP%s paths.', len(tasks), family)
+        log.info(" >>> Finished. Imported %d IP%s paths - Failed to import %d paths",
+                 len(pt.success_tasks), family, len(pt.failed_tasks))
 
-    async def _store_path(self, p) -> Prefix:
+        # log.info(' >>> Finished saving %s IP%s paths.', len(pt), family)
+
+    async def _store_path(self, p: SanePath) -> Prefix:
         p_dic = dict(p)
         # Obtain AS name via in-memory cache, database cache, or DNS lookup
         await self.get_as_name(p.source_asn)
@@ -302,7 +345,7 @@ class PathLoader:
                 # for k, v in p_dic.items():
                 #     setattr(pfx, k, v)
             
-            for c in communities:
+            for c in communities:   # type: LargeCommunity
                 if c not in self._cache['community_in_db']:
                     try:
                         await conn.execute(
@@ -382,58 +425,6 @@ def find_attr(obj: RepeatedCompositeContainer, type_url: str, unmarshal=True):
     return None
 
 
-class AddrFamily(Enum):
-    IPV4 = IPv4Network
-    IPV6 = IPv6Network
-
-
-@dataclass
-class SanePath:
-    prefix: Union[IPv4Network, IPv6Network]
-    family: AddrFamily
-    next_hops: List[Union[IPv4Address, IPv6Address]] = field(default_factory=list)
-    asn_path: List[int] = field(default_factory=list)
-    communities: List[int] = field(default_factory=list)
-    neighbor: Union[IPv4Address, IPv6Address] = None
-    source_id: str = ""
-    age: datetime = None
-
-    @property
-    def source_asn(self):
-        return self.asn_path[0] if len(self.asn_path) > 0 else None
-    
-    @property
-    def first_hop(self):
-        return self.next_hops[0] if len(self.next_hops) > 0 else None
-    
-    @property
-    def ixp(self):
-        ix_nets = IX_NET_VER[type(self.first_hop)]
-        for subnet, ixname in ix_nets:
-            subnet = ip_network(subnet)
-            if ip_address(self.first_hop) in subnet:
-                # log.debug('First hop %s is in subnet %s (IXP: %s)', self.first_hop, subnet, ixname)
-                return ixname
-            # log.debug('Hop %s is NOT in subnet %s (IXP: %s)', self.first_hop, subnet, ixname)
-        return 'N/A'
-    
-    def __iter__(self):
-        d = {
-            'prefix': str(self.prefix),
-            'family': 'v4' if self.family == AddrFamily.IPV4 else 'v6',
-            'next_hops': [str(hop) for hop in self.next_hops],
-            'first_hop': str(self.first_hop),
-            'asn_path': self.asn_path,
-            'source_asn': self.source_asn,
-            'communities': self.communities,
-            'neighbor': str(self.neighbor),
-            'age': str(self.age),
-            'ixp': self.ixp
-        }
-        for k, v in d.items():
-            yield (k, v,)
-
-
 class PathParser:
     def __init__(self, path: gobgp_pb2.ListPathResponse):
         self.orig_path = path    # type: gobgp_pb2.ListPathResponse
@@ -449,11 +440,13 @@ class PathParser:
     def asn_path(self) -> List[int]:
         p = self.path.pattrs
         r_asn = find_attr(p, 'AsPathAttribute')
-        return list(r_asn.segments[0].numbers)
+        segments = r_asn.segments
+        return [] if len(segments) < 1 else list(segments[0].numbers)
     
     @property
     def communities(self) -> List[int]:
-        return list(find_attr(self.path.pattrs, 'communities').communities)
+        c = find_attr(self.path.pattrs, 'communities')
+        return [] if not c else list(c.communities)
     
     @property
     def neighbor(self) -> Union[IPv4Address, IPv6Address]:
@@ -471,6 +464,10 @@ class PathParser:
     
     @property
     def source_asn(self) -> int:
+        if empty(self.path.source_asn, zero=True):
+            if len(self.asn_path) > 0:
+                return int(self.asn_path[0])
+            return OUR_ASN
         return int(self.path.source_asn)
     
     @property
@@ -534,4 +531,11 @@ class PathParser:
         
         for k, v in d.items():
             yield (k, v,)
+
+    def __str__(self):
+        return f"<PathParser prefix='{self.prefix}' source_asn='{self.source_asn}'" \
+               f" communities='{self.communities}' asn_path='{self.asn_path}' >"
+    
+    def __repr__(self):
+        return self.__str__()
 

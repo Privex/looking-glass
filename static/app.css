@@ -1,0 +1,38 @@
+.mainbox {
+    padding: 3em;
+    margin: 30px 0 30px 0 !important;
+}
+
+#results_segment {
+    min-height: 400px;
+}
+
+#logo {
+    text-align: center;
+}
+
+#logo img {
+    max-height: 200px;
+}
+
+#footer {
+    text-align: center;
+    margin: 30px 0 30px 0;
+    font-weight: 600;
+}
+
+.link {
+    cursor: pointer;
+    color: #11557C;
+    text-decoration: underline;
+}
+
+.container .padded-center {
+    margin: 0 auto;
+    padding: 2.5rem !important;
+}
+
+.error-list {
+    margin-top: 1em;
+    margin-bottom: 1em;
+}

@@ -2,4 +2,4 @@
 .env
 static/vue-dist/*
 gbgp.conf
-
+*.log

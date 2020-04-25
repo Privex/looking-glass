@@ -14,6 +14,8 @@
     <meta name="theme-color" content="#8963C3"/>
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/semantic-ui/2.4.1/semantic.min.css"/>
     <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/tholman/github-corners@master/css/styles.css" />
+    <link rel="stylesheet" href="/static/app.css"/>
+
     <style>
         .mainbox {
             padding: 3em;
@@ -35,6 +37,7 @@
             font-weight: 600;
         }
     </style>
+    {% block head %}{% endblock %}
 </head>
 <body>
             <a href="https://github.com/Privex/looking-glass" class="github-corner" aria-label="View source on GitHub">
@@ -67,7 +70,8 @@
         {% block content %}
         {% endblock %}
         <div class="ui segment" id="footer">
-            &copy; 2019 Privex Inc. --- Released under the GNU AGPL v3 --- <a href="https://github.com/Privex/looking-glass" target="_BLANK">View source on Github</a>  
+            &copy; 2020 Privex Inc. --- Released under the GNU AGPL v3 ---
+            <a href="https://github.com/Privex/looking-glass" target="_BLANK">View source on Github</a>
         </div>
     </div>
     <script src="https://cdn.jsdelivr.net/npm/vue/dist/vue.js"></script>

@@ -1,5 +1,16 @@
 <template>
     <div class="ui raised segment main-box">
+        <div class="ui grid">
+            <div class="four wide column">
+                <strong>Total Prefixes:</strong> {{ total_prefixes.all }}
+            </div>
+            <div class="four wide column">
+                <strong>Total IPv4 Prefixes:</strong> {{ total_prefixes.v4 }}
+            </div>
+            <div class="four wide column">
+                <strong>Total IPv6 Prefixes:</strong> {{ total_prefixes.v6 }}
+            </div>
+        </div>
         <table class="ui table compact">
             <thead>
                 <tr><th>ASN</th><th>Name</th><th>IPv4 Prefixes</th><th>IPv6 Prefixes</th></tr>
@@ -7,7 +18,7 @@
             <tbody>
                 <tr v-for="asn of sorted_asns" :key="asn._id">
                     <td>{{ asn.asn }}</td>
-                    <td :data-asn="asn.asn" @click="select_asn(asn.asn)">{{ asn.as_name }}</td>
+                    <td class="link" :data-asn="asn.asn" @click="select_asn(asn.asn)">{{ asn.as_name }}</td>
                     <td>{{ asn.v4 }}</td>
                     <td>{{ asn.v6 }}</td>
                 </tr>
@@ -17,6 +28,8 @@
 </template>
 
 <script>
+
+
 
 export default {
     name: 'ASNList',
@@ -39,6 +52,7 @@ export default {
         select_asn(asn) {
             this.$router.push({name: 'prefixes', params: {family: 'all', asn: asn, page: 1}})
         },
+
     },
 
     computed: {
@@ -48,7 +62,21 @@ export default {
             var sorted = Object.values(this.asns);
             sorted.sort(this.compare_asn).reverse();
             return sorted;
-        }
+        },
+        // mounted() {
+        //     this.$store.dispatch('loadPrefixes', {query: {family: this.family, asn: this.asn, page: this.page}});
+        // },
+        total_prefixes() {
+            return this.$store.state.total_prefixes;
+            // let i4 = 0, i6 = 0, asns = this.asns;
+            //
+            // for (let v in asns) {
+            //     if (!asns.hasOwnProperty(v)) continue;
+            //     i4 += asns[v].v4;
+            //     i6 += asns[v].v6;
+            // }
+            // return {v4: i4, v6: i6, all: i4 + i6};
+        },
     }
 
 }

@@ -10,6 +10,9 @@
       <router-link class="item" to="/peers" active-class="active" v-if="lg_enabled && peerapp_enabled">
         BGP Peers and Prefixes
       </router-link>
+      <router-link class="item" to="/prefixes/search" active-class="active" v-if="peerapp_enabled">
+        Search BGP Prefixes
+      </router-link>
     </div>
     <router-view />
   </div>
@@ -27,6 +30,9 @@ export default {
     lg_enabled() {
       return this.$store.state.lg_enabled
     },
+    api_error() {
+      return this.$store.state.error;
+    }
   }
 }
 </script>

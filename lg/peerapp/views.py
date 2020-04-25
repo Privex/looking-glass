@@ -1,14 +1,19 @@
 import logging
 import traceback
+from datetime import datetime, timedelta
 from ipaddress import ip_network, IPv4Network
-from typing import Tuple
+from typing import Tuple, Union, List
 from flask import Response, request, Blueprint
 from flask.json import jsonify
-from privex.helpers import empty, r_cache
+from flask_sqlalchemy import BaseQuery
+from privex.helpers import empty, r_cache, is_true, Git, empty_if, ip_is_v4, ip_is_v6
 from sqlalchemy.orm import Query
 from lg import base
-from lg.models import Prefix
+from lg.exceptions import InvalidIP
+from lg.models import Prefix, IPFilter
 from getenv import env
+
+from lg.peerapp.settings import PREFIX_TIMEOUT
 
 flask = Blueprint('peerapp', __name__, template_folder='templates')
 
@@ -46,6 +51,26 @@ def json_err(err_code: str) -> Tuple[Response, int]:
     err = err_dict[err_code]
 
     return jsonify(error=True, message=err[0], err_code=err_code), err[1]
+
+
+@flask.route('/api/v1/info')
+@flask.route('/api/v1/info/')
+@r_cache('lg_api_info', 30)
+def lg_info():
+    last_prefix = Prefix.latest_seen_prefixes()
+    
+    data = dict(
+        message="This is an instance of Privex Looking Glass. Released open source under GNU AGPL v3. "
+                "(C) 2020 Privex Inc. - https://github.com/Privex/looking-glass",
+        git_commit=base.GIT_COMMIT,
+        git_tag=base.GIT_TAG,
+        git_branch=base.GIT_BRANCH,
+        latest_prefix_time=last_prefix.last_seen,
+        latest_prefix=last_prefix.to_dict(),
+        total_prefixes=Prefix.query.count(),
+
+    )
+    return jsonify(data)
 
 
 @flask.route('/api/v1/asn_prefixes')
@@ -92,19 +117,20 @@ def asn_prefixes():
     v = request.values
     asn = v.get('asn')
     asn_map = {}
-
+    last_seen = (Prefix.latest_seen_prefixes().last_seen - timedelta(seconds=PREFIX_TIMEOUT))
+    
     if empty(asn):
         query = 'SELECT a.asn, a.as_name, COUNT(p.prefix) as total_prefixes ' \
                 'FROM prefix p INNER JOIN asn a ON a.asn = p.asn_id ' \
-                'WHERE p.prefix << :pfx GROUP BY a.asn ORDER BY total_prefixes DESC;'
-        pfxs_v4 = db.session.execute(query, dict(pfx='0.0.0.0/0'))
-        pfxs_v6 = db.session.execute(query, dict(pfx='::/0'))
+                'WHERE p.prefix << :pfx AND p.last_seen > :last_seen GROUP BY a.asn ORDER BY total_prefixes DESC;'
+        pfxs_v4 = db.session.execute(query, dict(pfx='0.0.0.0/0', last_seen=last_seen))
+        pfxs_v6 = db.session.execute(query, dict(pfx='::/0', last_seen=last_seen))
     else:
         query = 'SELECT a.asn, a.as_name, COUNT(p.prefix) as total_prefixes ' \
                 'FROM prefix p INNER JOIN asn a ON a.asn = p.asn_id ' \
-                'WHERE p.prefix << :pfx AND a.asn = :asn GROUP BY a.asn;'
-        pfxs_v4 = db.session.execute(query, dict(pfx='0.0.0.0/0', asn=asn))
-        pfxs_v6 = db.session.execute(query, dict(pfx='::/0', asn=asn))
+                'WHERE p.prefix << :pfx AND p.last_seen > :last_seen AND a.asn = :asn GROUP BY a.asn;'
+        pfxs_v4 = db.session.execute(query, dict(pfx='0.0.0.0/0', asn=asn, last_seen=last_seen))
+        pfxs_v6 = db.session.execute(query, dict(pfx='::/0', asn=asn, last_seen=last_seen))
 
     for asn, asname, total_prefixes in pfxs_v4:
         if asn not in asn_map: asn_map[asn] = dict(v4=0, v6=0)
@@ -121,6 +147,58 @@ def asn_prefixes():
         a['prefixes'] = a['v6'] + a['v4']
 
     return jsonify(asn_map)
+
+
+@flask.route('/api/v1/prefix/<prefix>/')
+@flask.route('/api/v1/prefix/<prefix>/<cidr>')
+@flask.route('/api/v1/prefix/<prefix>/<cidr>/')
+@r_cache(
+    lambda prefix, cidr=None: f'lg_prefix:{prefix}:{cidr}:{request.values.get("asn")}:{request.values.get("exact")}'
+                              f':{request.values.get("limit")}:{request.values.get("skip")}'
+)
+def get_prefix(prefix: str, cidr: int = None):
+    # If there's no CIDR number, then we treat 'prefix' as a singular IP address
+    is_single = False
+    if empty(cidr):
+        try:
+            cidr = 32 if ip_is_v4(prefix) else 128
+        except ValueError:
+            raise InvalidIP(f"IP / Prefix '{prefix}' is invalid.")
+        is_single = True
+    
+    v = request.values
+    exact, asn = is_true(v.get('exact', True)), v.get('asn', None)
+    asn = int(asn) if not empty(asn, zero=True) else None
+    limit, skip = validate_limits(v.get('limit'), v.get('skip'))
+    
+    # For individual IPs, we search for the prefix(es) that contains the IP.
+    # For normal CIDR subnets, we search for the matching prefix and any sub-prefixes within that subnet.
+    _filter = IPFilter.CONTAINS_EQUAL if is_single else IPFilter.WITHIN_EQUAL
+    _pfx = f"{prefix}" if is_single else f"{prefix}/{cidr}"
+    
+    p: Union[Prefix, BaseQuery] = Prefix.filter_prefix(_pfx, exact=exact, asn=asn, op=_filter)
+    
+    # If the 'exact' parameter is set to True (default), we return just the matching prefix, if it's found.
+    if exact:
+        p = p.first()
+        if not p:
+            return json_err('NOT_FOUND')
+        return jsonify(error=False, result=p.to_dict())
+
+    latest_prefix: Prefix = Prefix.latest_seen_prefixes(limit=1, single=True)
+    latest_last_seen = latest_prefix.last_seen
+
+    p = p.filter(Prefix.last_seen > (latest_last_seen - timedelta(seconds=PREFIX_TIMEOUT)))
+    # For non-exact searches, we return a list of prefixes that match the query
+    total = p.count()
+    p: List[Prefix] = list(p.slice(skip, skip + limit))
+    return jsonify(
+        error=False,
+        count=len(p),
+        total=total,
+        pages=int(total / limit),
+        result=[k.to_dict() for k in p]
+    )
 
 
 @flask.route('/api/v1/prefixes')
@@ -196,29 +274,12 @@ def list_prefixes():
 
     """
     v = request.values
-    asn = v.get('asn')
-    family = v.get('family')
-    limit = v.get('limit')
-    skip = v.get('skip')
-    # selector = {}
+    asn, family = v.get('asn'), v.get('family')
+    limit, skip = validate_limits(v.get('limit'), v.get('skip'))
 
-    if empty(limit):
-        limit = int(env('VUE_APP_DEFAULT_API_LIMIT', 1000))
-    else:
-        limit = int(limit)
-        max_limit = int(env('VUE_APP_MAX_API_LIMIT', 10000))
-        if limit > max_limit:
-            limit = max_limit
-        elif limit < 1:
-            limit = 1
-
-    if empty(skip):
-        skip = 0
-    else:
-        skip = int(skip)
-        if skip < 0:
-            skip = 0
-
+    latest_prefix: Prefix = Prefix.latest_seen_prefixes(limit=1, single=True)
+    latest_last_seen = latest_prefix.last_seen
+    
     p = Prefix.query   # type: Query
 
     if not empty(asn):
@@ -228,20 +289,16 @@ def list_prefixes():
         pfx = '0.0.0.0/0' if family == 'v4' else '::/0'
         p = p.filter(Prefix.prefix.op('<<')(pfx))
 
+    p = p.filter(Prefix.last_seen > (latest_last_seen - timedelta(seconds=PREFIX_TIMEOUT)))
+
     p = p.order_by(Prefix.id).slice(skip, skip + limit).from_self()
     p = p.join(Prefix.communities, Prefix.source_asn).order_by(Prefix.id).all()
 
     res = []
     for z in p:    # type: Prefix
-        ntw = ip_network(z.prefix)
-        is_v4 = isinstance(ntw, IPv4Network)
-        res.append(
-            dict(
-                prefix=z.prefix, age=z.age, source_asn=z.source_asn.asn, as_name=z.source_asn.as_name,
-                communities=[c.id for c in z.communities], family='v4' if is_v4 else 'v6', first_hop=z.next_hops[0],
-                next_hops=z.next_hops, ixp=z.ixp, last_seen=z.last_seen, neighbor=z.neighbor, asn_path=z.asn_path
-            )
-        )
+        # ntw = ip_network(z.prefix)
+        # is_v4 = isinstance(ntw, IPv4Network)
+        res.append(z.to_dict())
 
     asn_data = asn_prefixes().get_json()
 
@@ -260,3 +317,70 @@ def list_prefixes():
     response['prefixes'] = res
 
     return jsonify(response)
+
+
+def validate_limits(limit, skip) -> Tuple[int, int]:
+    limit, skip = int(empty_if(limit, base.DEFAULT_API_LIMIT)), int(empty_if(skip, 0))
+    limit = base.MAX_API_LIMIT if limit > base.MAX_API_LIMIT else limit
+    limit = 1 if limit < 1 else limit
+    skip = 0 if skip < 0 else skip
+    return limit, skip
+
+
+def setup_api_routes():
+    base.add_api_route(
+        'info',
+        base.APIRoute(
+            endpoint='/api/v1/info/',
+            description="Returns basic status/version information about the running Privex Looking Glass instance"
+        )
+    )
+    base.add_api_route(
+        'asn_prefixes',
+        base.APIRoute(
+            endpoint='/api/v1/asn_prefixes/',
+            description="Calculates the number of v4, v6 and total prefixes for all ASNs, or a singular ASN",
+            get_params=dict(
+                asn=base.APIParam(value_type='int', required=False, description="Display stats for just this ASN instead of all ASNs.")
+            )
+        )
+    )
+    base.add_api_route(
+        'get_prefix',
+        base.APIRoute(
+            endpoint='/api/v1/get_prefix/<address>/<cidr>',
+            description="Calculates the number of v4, v6 and total prefixes for all ASNs, or a singular ASN",
+            get_params=dict(
+                asn=base.APIParam(value_type='int', required=False, description="Match only prefixes for this ASN"),
+                exact=base.APIParam(
+                    value_type='bool', required=False,
+                    description="(Default: true) true = find this specific prefix. false = find this prefix and any sub-prefixes"
+                                "contained within the CIDR subnet."
+                ),
+            ),
+            url_params=dict(
+                address=base.APIParam(
+                    value_type='str', required=True, description="The IP portion of the prefix being looked up"
+                ),
+                cidr=base.APIParam(
+                    value_type='int', required=True, description="The CIDR subnet divider (1-32 for IPv4, 1-128 for IPv6)"
+                )
+            )
+        )
+    )
+    
+    base.add_api_route(
+        'list_prefixes',
+        base.APIRoute(
+            endpoint='/api/v1/prefixes/',
+            description="Calculates the number of v4, v6 and total prefixes for all ASNs, or a singular ASN",
+            get_params=dict(
+                asn=base.APIParam(value_type='int', required=False, description="Match only prefixes for this ASN"),
+                family=base.APIParam(value_type='str', required=False, description="Either `v4` or `v6` to only show v4 or v6 prefixes"),
+                limit=base.APIParam(value_type='int', required=False,
+                                    description=f"Limit result set to this many prefixes (max: {base.MAX_API_LIMIT})"),
+                skip=base.APIParam(value_type='int', required=False,
+                                   description=f"Skips this amount of prefixes before returning results (for pagination)"),
+            )
+        )
+    )

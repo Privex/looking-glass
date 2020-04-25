@@ -2,7 +2,7 @@ import ipaddress
 from ipaddress import ip_network, IPv4Address, IPv6Address, IPv4Network, IPv6Network, _BaseNetwork
 from typing import Union, Tuple
 
-from privex.helpers import env_keyval, env_csv
+from privex.helpers import env_keyval, env_csv, env_int
 from os import getenv as env
 
 #######################################
@@ -59,6 +59,18 @@ Amount of prefixes to commit as a chunk while running `./manage.py prefixes`
 
 Affects how often it displays the current progress, i.e. `Saved 1200 out of 4548 prefixes` as well as how many
 prefixes are committed per each TX. Numbers lower than 20 may result in performance issues.
+"""
+
+PREFIX_TIMEOUT = env_int('PREFIX_TIMEOUT', 1800)
+"""
+Prefixes with a ``last_seen`` more than PREFIX_TIMEOUT seconds ago from the newest prefix in the database
+will be considered stale, and thus not shown on the ASN summary page, nor the individual prefix list for an ASN.
+
+Default: ``1800`` seconds = 20 minutes.
+
+We compare against the newest last_seen timestamp in the database, allowing you to run import_prefixes
+as often as you like, e.g. once per 30-60 mins, without having prefixes go stale due to import_prefixes
+being ran occasionally.
 """
 
 BLACKLIST_ROUTES = [ip_network(ip) for ip in BLACKLIST_ROUTES]
