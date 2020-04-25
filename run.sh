@@ -12,25 +12,33 @@
 #                                                              #
 ################################################################
 
-
 ######
 # Directory where the script is located, so we can source files regardless of where PWD is
 ######
 
-DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )"
+DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+
+export PATH="/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin:/usr/games:/usr/local/games:${PATH}"
+export PATH="${HOME}/.local/bin:${PATH}"
 
 cd "$DIR"
 
 [[ -f .env ]] && source .env || echo "Warning: No .env file found."
 
-BOLD="$(tput bold)" RED="$(tput setaf 1)" GREEN="$(tput setaf 2)" YELLOW="$(tput setaf 3)" BLUE="$(tput setaf 4)"
-MAGENTA="$(tput setaf 5)" CYAN="$(tput setaf 6)" WHITE="$(tput setaf 7)" RESET="$(tput sgr0)"
+BOLD="" RED="" GREEN="" YELLOW="" BLUE="" MAGENTA="" CYAN="" WHITE="" RESET=""
+if [ -t 1 ]; then
+    BOLD="$(tput bold)" RED="$(tput setaf 1)" GREEN="$(tput setaf 2)" YELLOW="$(tput setaf 3)" BLUE="$(tput setaf 4)"
+    MAGENTA="$(tput setaf 5)" CYAN="$(tput setaf 6)" WHITE="$(tput setaf 7)" RESET="$(tput sgr0)"
+fi
 
 # easy coloured messages function
 # written by @someguy123
-function msg () {
+function msg() {
     # usage: msg [color] message
-    if [[ "$#" -eq 0 ]]; then echo ""; return; fi;
+    if [[ "$#" -eq 0 ]]; then
+        echo ""
+        return
+    fi
     if [[ "$#" -eq 1 ]]; then
         echo -e "$1"
         return
@@ -48,12 +56,12 @@ function msg () {
     [[ "$ts" == "yes" ]] && _msg="[$(date +'%Y-%m-%d %H:%M:%S %Z')] ${@:2}" || _msg="${@:2}"
 
     case "$1" in
-        bold) echo -e "${BOLD}${_msg}${RESET}";;
-        [Bb]*) echo -e "${BLUE}${_msg}${RESET}";;
-        [Yy]*) echo -e "${YELLOW}${_msg}${RESET}";;
-        [Rr]*) echo -e "${RED}${_msg}${RESET}";;
-        [Gg]*) echo -e "${GREEN}${_msg}${RESET}";;
-        * ) echo -e "${_msg}";;
+        bold) echo -e "${BOLD}${_msg}${RESET}" ;;
+        [Bb]*) echo -e "${BLUE}${_msg}${RESET}" ;;
+        [Yy]*) echo -e "${YELLOW}${_msg}${RESET}" ;;
+        [Rr]*) echo -e "${RED}${_msg}${RESET}" ;;
+        [Gg]*) echo -e "${GREEN}${_msg}${RESET}" ;;
+        *) echo -e "${_msg}" ;;
     esac
 }
 
@@ -62,11 +70,11 @@ case "$1" in
         msg ts bold green "Starting Looking Glass RabbitMQ Worker"
         pipenv run ./manage.py queue
         ;;
-    prefix*|cron)
+    prefix* | cron)
         msg ts bold green "Starting BGP Prefix Loader"
         pipenv run ./manage.py prefixes -q
         ;;
-    update|upgrade)
+    update | upgrade)
         msg ts bold green " >> Updating files from Github"
         git pull
         msg ts bold green " >> Updating Python packages"
@@ -89,11 +97,11 @@ case "$1" in
         msg yellow " - Please remember to restart all Privex Looking Glass services AS ROOT like so:"
         msg blue "\t systemctl restart looking-glass lg-queue gobgp"
         ;;
-    serve*|runserv*)
+    serve* | runserv*)
         # Override these defaults inside of `.env`
         : ${HOST='127.0.0.1'}
         : ${PORT='8282'}
-        : ${GU_WORKERS='4'}    # Number of Gunicorn worker processes
+        : ${GU_WORKERS='4'} # Number of Gunicorn worker processes
 
         pipenv run gunicorn -b "${HOST}:${PORT}" -w "$GU_WORKERS" wsgi
         ;;
