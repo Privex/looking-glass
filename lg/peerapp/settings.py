@@ -35,6 +35,8 @@ IX_RANGES = env_keyval('IX_RANGES', [
     ('SOL-IX STH', '2001:7F8:21:9::/64'),
     ('SOL-IX STH (MTU 4470)', '2001:7F8:21:10::/64'),
     ('SOL-IX STH (MTU 4470)', '193.110.12.0/24'),
+    ('STHIX Stockholm', '2001:7F8:3E:0::/64'),
+    ('STHIX Stockholm', '192.121.80.0/24'),
 ], valsplit='|')
 """
 To override the above subnets for exchanges, set the env var IX_RANGES in .env like so::
